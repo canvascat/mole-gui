@@ -4,7 +4,9 @@ import SwiftUI
 final class UninstallUI: ObservableObject {
     @Published var selection = Set<String>()
     @Published var query = ""
-    @Published var draft = ""
+    @Published var confirm = false
+    @Published var pendingNames: [String] = []
+    @Published var pendingLabels: [String] = []
 }
 
 struct UninstallView: View {
@@ -24,13 +26,23 @@ struct UninstallView: View {
         }
     }
 
-    private var selectedNames: [String] {
+    private var selectedApps: [UninstallApp] {
         var seen = Set<String>()
-        return model.uninstallApps.compactMap { app -> String? in
-            guard ui.selection.contains(app.id) else { return nil }
+        return model.uninstallApps.filter { app in
+            guard ui.selection.contains(app.id) else { return false }
             let name = app.uninstallName
-            guard !name.isEmpty, seen.insert(name).inserted else { return nil }
-            return name
+            guard !name.isEmpty, seen.insert(name).inserted else { return false }
+            return true
+        }
+    }
+
+    private var selectedNames: [String] {
+        selectedApps.map(\.uninstallName)
+    }
+
+    private var selectedLabels: [String] {
+        selectedApps.map { app in
+            app.name.isEmpty ? app.uninstallName : app.name
         }
     }
 
@@ -38,16 +50,20 @@ struct UninstallView: View {
         PageShell(
             model: model,
             title: "卸载",
-            subtitle: "列表来自 mo uninstall --list。真正卸载在伪终端里执行，让 CLI 自己的确认继续生效。不传 --with-data，也不传 --permanent。"
+            subtitle: "列表来自 mo uninstall --list。确认后执行 mo uninstall，不用在命令行里输入。文件进废纸篓，个人数据保留。不传 --with-data，也不传 --permanent。"
         ) {
             FillColumn(spacing: 16) {
-                WarningNote(text: "窗口里的选择不能代替 CLI 的确认。默认保留个人数据。文件默认进废纸篓。应用已经不在时，应改用清理去找残留。")
+                WarningNote(text: "点卸载后，窗口会再确认一次。确认后直接执行。应用文件放进废纸篓，个人数据保留。应用已经不在时，应改用清理去找残留。")
                 HStack {
                     Button(listJob.running ? "正在列出…" : "刷新列表") { model.loadUninstallList() }
                         .disabled(model.moPath == nil || listJob.running)
                     Button("预览") { model.previewUninstall(names: selectedNames) }
                         .disabled(model.moPath == nil || preview.running || selectedNames.isEmpty)
-                    Button("在伪终端中卸载") { model.startUninstall(names: selectedNames) }
+                    Button("在伪终端中卸载") {
+                        ui.pendingNames = selectedNames
+                        ui.pendingLabels = selectedLabels
+                        ui.confirm = true
+                    }
                         .disabled(!UninstallLaunch.canStart(
                             moFound: model.moPath != nil,
                             terminalRunning: terminal.running,
@@ -109,7 +125,7 @@ struct UninstallView: View {
                             VStack(spacing: gap) {
                                 StreamPanes(job: preview)
                                     .frame(height: previewHeight)
-                                terminalPane
+                                liveLog
                                     .frame(height: terminalHeight)
                             }
                         }
@@ -130,53 +146,48 @@ struct UninstallView: View {
                 model.loadUninstallList()
             }
         }
+        .alert("确认卸载？", isPresented: $ui.confirm) {
+            Button("取消", role: .cancel) {}
+            Button("卸载", role: .destructive) {
+                model.startUninstall(names: ui.pendingNames)
+            }
+        } message: {
+            Text("将卸载 \(ui.pendingLabels.joined(separator: "，"))。相关文件会放进废纸篓。个人数据会保留。")
+        }
     }
 
-    private var terminalPane: some View {
+    private var liveLog: some View {
         FillColumn(spacing: 8) {
-            Text("伪终端")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text("标准输出和标准错误在这里合在一起。请在下面完成 CLI 自己的确认。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
             if !terminal.commandLine.isEmpty {
                 Text(terminal.commandLine)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
             }
             if let error = terminal.error {
                 Text(error).foregroundStyle(Theme.danger)
             }
-            LogPane(
-                text: terminal.transcript,
-                foreground: Color(red: 0.93, green: 0.95, blue: 0.90),
-                background: Color(red: 0.12, green: 0.13, blue: 0.11),
-                empty: "卸载开始后，CLI 的预览会出现在这里。"
-            )
-            .fillsRemainder()
-            HStack {
-                TextField("发送到 CLI", text: $ui.draft)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { sendDraft() }
-                Button("发送") { sendDraft() }
-                    .disabled(!terminal.running)
-                Button("回车") { terminal.sendEnter() }
-                    .disabled(!terminal.running)
-                Button("中断") { terminal.sendInterrupt() }
-                    .disabled(!terminal.running)
+            GeometryReader { proxy in
+                let gap: CGFloat = 8
+                let height = max((proxy.size.height - gap) / 2, 0)
+                VStack(spacing: gap) {
+                    LogPane(
+                        title: "标准输出",
+                        text: terminal.stdout,
+                        empty: "确认后，卸载输出会显示在这里。"
+                    )
+                    .frame(height: height)
+                    LogPane(title: "标准错误", text: terminal.stderr)
+                        .frame(height: height)
+                }
             }
+            .fillsRemainder()
             if let code = terminal.exitCode {
                 Text(terminal.stopped ? "已停止，退出码 \(code)。" : "退出码 \(code)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func sendDraft() {
-        terminal.sendLine(ui.draft)
-        ui.draft = ""
     }
 }
 

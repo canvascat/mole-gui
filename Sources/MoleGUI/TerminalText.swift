@@ -85,3 +85,27 @@ struct TerminalBuffer {
 
     var text: String { lines.joined(separator: "\n") }
 }
+
+enum UninstallLog {
+    static func awaitsConfirm(_ raw: String) -> Bool {
+        let plain = TerminalText.stripANSI(raw).lowercased()
+        return plain.contains("enter confirm") && plain.contains("esc") && plain.contains("cancel")
+    }
+
+    static func visible(_ raw: String) -> String {
+        var buffer = TerminalBuffer()
+        buffer.ingest(raw)
+        return buffer.lines
+            .filter { !isPromptLine($0) }
+            .joined(separator: "\n")
+    }
+
+    static func isPromptLine(_ line: String) -> Bool {
+        let text = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if text.isEmpty { return false }
+        if text.contains("enter confirm") && text.contains("esc") { return true }
+        if text.contains("choose personal data") { return true }
+        if text.contains("press enter to return") { return true }
+        return false
+    }
+}

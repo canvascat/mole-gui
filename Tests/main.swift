@@ -157,6 +157,21 @@ buffer = TerminalBuffer()
 buffer.ingest("\u{1B}[31m红色\u{1B}[0m")
 expect(buffer.text == "红色", "去掉 ANSI", buffer.text)
 
+let promptSample = """
+Files to be removed:
+Demo
+\u{1B}[90mD\u{1B}[0m choose personal data
+Remove 1 app  \u{1B}[32mEnter\u{1B}[0m confirm, \u{1B}[90mESC\u{1B}[0m cancel: 
+"""
+expect(UninstallLog.awaitsConfirm(promptSample), "识别卸载确认提示")
+expect(!UninstallLog.awaitsConfirm("Dry run complete; no apps were removed."), "预览不是确认")
+let shownPrompt = UninstallLog.visible(promptSample)
+expect(shownPrompt.contains("Files to be removed"), "日志保留卸载计划", shownPrompt)
+expect(shownPrompt.contains("Demo"), "日志保留应用名", shownPrompt)
+expect(!shownPrompt.lowercased().contains("enter confirm"), "日志不含确认提示", shownPrompt)
+expect(!shownPrompt.lowercased().contains("choose personal data"), "日志不含 D 提示", shownPrompt)
+expect(!UninstallLog.visible("Press Enter to return to the app list, press q to exit (5) ").lowercased().contains("press enter"), "日志不含返回列表提示")
+
 let statusJSON = """
 noise
 {"health_score": 88, "health_score_msg": "良好", "host": "mbp", "uptime": "3 days",
@@ -261,6 +276,46 @@ pty.wait()
 let ptySnap = pty.snapshot()
 expect(ptySnap.stdout.contains("LINE:y"), "伪终端收到确认", ptySnap.stdout)
 expect(!ptySnap.stdout.contains("NO-TTY"), "伪终端不是管道")
+
+let confirmScript = try makeMo(directory: "confirm", body: """
+#!/bin/sh
+if [ ! -t 0 ]; then
+  echo NO-TTY
+  exit 3
+fi
+printf 'Files to be removed:\\nDemo\\n'
+printf 'D choose personal data\\n'
+printf 'Enter confirm, ESC cancel: '
+IFS= read -r line || exit 2
+printf '\\nDONE\\n'
+exit 0
+""")
+let confirmJob = MainActor.assumeIsolated { PTYJob() }
+MainActor.assumeIsolated {
+    confirmJob.start(
+        moPath: confirmScript,
+        names: ["Demo"]
+    )
+}
+let confirmDeadline = Date().addingTimeInterval(3)
+while Date() < confirmDeadline {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    let finished = MainActor.assumeIsolated { confirmJob.stdout.contains("DONE") || confirmJob.exitCode != nil }
+    if finished { break }
+}
+let confirmOut = MainActor.assumeIsolated { confirmJob.stdout }
+let confirmErr = MainActor.assumeIsolated { confirmJob.stderr }
+let confirmCode = MainActor.assumeIsolated { confirmJob.exitCode }
+if confirmCode == nil {
+    MainActor.assumeIsolated { confirmJob.stop() }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+}
+expect(confirmOut.contains("DONE"), "确认后自动应答卸载", confirmOut + confirmErr)
+expect(!confirmOut.lowercased().contains("enter confirm"), "标准输出不显示确认提示", confirmOut)
+expect(!confirmOut.lowercased().contains("choose personal data"), "标准输出不显示 D 提示", confirmOut)
+expect(!confirmErr.lowercased().contains("enter confirm"), "标准错误不显示确认提示", confirmErr)
+expect(confirmOut.contains("Files to be removed"), "标准输出保留卸载计划", confirmOut)
+expect(!confirmOut.contains("NO-TTY"), "卸载输入仍是终端")
 
 if failures.isEmpty {
     print("all tests passed")

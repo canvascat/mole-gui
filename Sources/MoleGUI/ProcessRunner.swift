@@ -270,16 +270,20 @@ final class PTYRun: @unchecked Sendable {
     private let lock = NSLock()
     private var master: Int32 = -1
     private var process: Process?
-    private var output = ""
+    private var stdout = ""
+    private var stderr = ""
+    private var tty = ""
     private var stopped = false
     private var exitCode: Int32?
     private var finished = false
     private var didSignal = false
     private var acquired = false
-    private var readEnded = false
+    private var streamsOpen = 2
+    private let cap = 400_000
     private let done = DispatchSemaphore(value: 0)
     private var onChange: (@Sendable () -> Void)?
     private var handles: [FileHandle] = []
+    private var pipes: [Pipe] = []
 
     func setChangeHandler(_ handler: @escaping @Sendable () -> Void) {
         lock.lock()
@@ -290,14 +294,20 @@ final class PTYRun: @unchecked Sendable {
     func snapshot() -> CommandSnapshot {
         lock.lock()
         defer { lock.unlock() }
-        let complete = finished && readEnded
+        let complete = finished && streamsOpen <= 0
         return CommandSnapshot(
-            stdout: output,
-            stderr: "",
+            stdout: stdout,
+            stderr: stderr,
             running: !complete && process != nil,
             exitCode: complete ? exitCode : nil,
             stopped: stopped
         )
+    }
+
+    func controlText() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return stdout + "\n" + stderr + "\n" + tty
     }
 
     func start(executable: String, arguments: [String], environment: [String: String]) throws {
@@ -332,16 +342,27 @@ final class PTYRun: @unchecked Sendable {
         env["TERM"] = "xterm-256color"
         process.environment = env
         let inputFD = dup(slaveFD)
-        let outputFD = dup(slaveFD)
-        let errorFD = dup(slaveFD)
         let input = FileHandle(fileDescriptor: inputFD, closeOnDealloc: false)
-        let outputHandle = FileHandle(fileDescriptor: outputFD, closeOnDealloc: false)
-        let errorHandle = FileHandle(fileDescriptor: errorFD, closeOnDealloc: false)
-        handles = [input, outputHandle, errorHandle]
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        handles = [input, outPipe.fileHandleForReading, errPipe.fileHandleForReading]
+        pipes = [outPipe, errPipe]
         process.standardInput = input
-        process.standardOutput = outputHandle
-        process.standardError = errorHandle
+        process.standardOutput = outPipe
+        process.standardError = errPipe
         self.process = process
+        let outFD = outPipe.fileHandleForReading.fileDescriptor
+        let errFD = errPipe.fileHandleForReading.fileDescriptor
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.readPipe(fd: outFD, stderr: false)
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.readPipe(fd: errFD, stderr: true)
+        }
+        let masterCopy = masterFD
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.readMaster(masterCopy)
+        }
         process.terminationHandler = { [weak self] proc in
             ProcessTracker.shared.remove(proc)
             self?.noteExit(proc.terminationStatus)
@@ -352,8 +373,6 @@ final class PTYRun: @unchecked Sendable {
         } catch {
             Darwin.close(slaveFD)
             Darwin.close(inputFD)
-            Darwin.close(outputFD)
-            Darwin.close(errorFD)
             Darwin.close(masterFD)
             master = -1
             ProcessTracker.shared.remove(process)
@@ -362,12 +381,8 @@ final class PTYRun: @unchecked Sendable {
         }
         Darwin.close(slaveFD)
         Darwin.close(inputFD)
-        Darwin.close(outputFD)
-        Darwin.close(errorFD)
-        let masterCopy = masterFD
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.readMaster(masterCopy)
-        }
+        try? outPipe.fileHandleForWriting.close()
+        try? errPipe.fileHandleForWriting.close()
     }
 
     func send(_ text: String) {
@@ -395,6 +410,40 @@ final class PTYRun: @unchecked Sendable {
 
     func wait() { done.wait() }
 
+    private func readPipe(fd: Int32, stderr: Bool) {
+        var buffer = [UInt8](repeating: 0, count: 8192)
+        while true {
+            let count = Darwin.read(fd, &buffer, buffer.count)
+            if count > 0 {
+                append(Data(buffer[0..<count]), stderr: stderr)
+            } else {
+                break
+            }
+        }
+        markStreamEnded()
+    }
+
+    private func append(_ data: Data, stderr: Bool) {
+        let text = String(decoding: data, as: UTF8.self)
+        lock.lock()
+        if stderr {
+            self.stderr = capped(self.stderr, text)
+        } else {
+            self.stdout = capped(self.stdout, text)
+        }
+        let change = onChange
+        lock.unlock()
+        change?()
+    }
+
+    private func capped(_ existing: String, _ text: String) -> String {
+        var next = existing + text
+        if next.count > cap {
+            next = "…前文已截断…\n" + String(next.suffix(cap))
+        }
+        return next
+    }
+
     private func readMaster(_ fd: Int32) {
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -402,10 +451,7 @@ final class PTYRun: @unchecked Sendable {
             if count > 0 {
                 let text = String(decoding: Data(buffer[0..<count]), as: UTF8.self)
                 lock.lock()
-                output += text
-                if output.count > 400_000 {
-                    output = "…前文已截断…\n" + String(output.suffix(400_000))
-                }
+                tty = capped(tty, text)
                 let change = onChange
                 lock.unlock()
                 change?()
@@ -413,9 +459,12 @@ final class PTYRun: @unchecked Sendable {
                 break
             }
         }
+    }
+
+    private func markStreamEnded() {
         lock.lock()
-        readEnded = true
-        let ready = finished && !didSignal
+        streamsOpen -= 1
+        let ready = streamsOpen <= 0 && finished && !didSignal
         let change = onChange
         lock.unlock()
         change?()
@@ -426,7 +475,7 @@ final class PTYRun: @unchecked Sendable {
         lock.lock()
         exitCode = code
         finished = true
-        let ready = readEnded && !didSignal
+        let ready = streamsOpen <= 0 && !didSignal
         let change = onChange
         lock.unlock()
         change?()
@@ -576,7 +625,8 @@ final class CommandJob: ObservableObject {
 
 @MainActor
 final class PTYJob: ObservableObject {
-    @Published var transcript = ""
+    @Published var stdout = ""
+    @Published var stderr = ""
     @Published var running = false
     @Published var exitCode: Int32?
     @Published var error: String?
@@ -584,7 +634,7 @@ final class PTYJob: ObservableObject {
     @Published var stopped = false
 
     private var live: PTYRun?
-    private var buffer = TerminalBuffer()
+    private var confirmArmed = false
 
     func start(moPath: String?, names: [String]) {
         error = nil
@@ -593,7 +643,7 @@ final class PTYJob: ObservableObject {
             return
         }
         if running {
-            error = "卸载还在伪终端里进行。"
+            error = "卸载还在进行。"
             return
         }
         let arguments: [String]
@@ -609,8 +659,9 @@ final class PTYJob: ObservableObject {
         }
         let run = PTYRun()
         live = run
-        buffer = TerminalBuffer()
-        transcript = ""
+        confirmArmed = false
+        stdout = ""
+        stderr = ""
         exitCode = nil
         stopped = false
         running = true
@@ -634,14 +685,6 @@ final class PTYJob: ObservableObject {
         }
     }
 
-    func sendLine(_ text: String) {
-        live?.send(text + "\r")
-    }
-
-    func sendEnter() { live?.send("\r") }
-
-    func sendInterrupt() { live?.send("\u{3}") }
-
     func stop() {
         stopped = true
         live?.stop()
@@ -649,10 +692,17 @@ final class PTYJob: ObservableObject {
 
     private func pull(_ run: PTYRun) {
         let snap = run.snapshot()
-        buffer = TerminalBuffer()
-        buffer.ingest(snap.stdout)
-        transcript = buffer.text
+        stdout = UninstallLog.visible(snap.stdout)
+        stderr = UninstallLog.visible(snap.stderr)
         stopped = snap.stopped || stopped
+        if !confirmArmed, UninstallLog.awaitsConfirm(run.controlText()) {
+            confirmArmed = true
+            // CLI 先清掉已经排队的按键，再读确认。等这次清空结束再回车。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self, self.running else { return }
+                self.live?.send("\r")
+            }
+        }
         if let code = snap.exitCode {
             exitCode = code
             running = false
