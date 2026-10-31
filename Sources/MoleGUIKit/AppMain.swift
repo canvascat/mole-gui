@@ -16,12 +16,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main
-struct MoleGUIApp: App {
+public struct MoleGUIApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
 
-    var body: some Scene {
+    public init() {}
+
+    public var body: some Scene {
         WindowGroup {
             RootView(model: model)
                 .frame(

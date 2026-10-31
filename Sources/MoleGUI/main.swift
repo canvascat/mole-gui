@@ -1,0 +1,3 @@
+import MoleGUIKit
+
+MoleGUIApp.main()
