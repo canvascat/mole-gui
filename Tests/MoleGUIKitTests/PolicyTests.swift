@@ -193,6 +193,49 @@ import Testing
         #expect(apps?.first?.source == "App")
     }
 
+    @Test func 卸载后的相关文件() {
+        let home = NSHomeDirectory()
+        let kept = home + "/Library/Preferences/io.tailscale.ipn.macsys.plist"
+        let cache = home + "/Library/Caches/io.tailscale.ipn.macsys"
+        let support = home + "/Library/Application Support/Tailscale"
+        let log = """
+        Files to be removed:
+        ✓ Tailscale , 80.2 MB
+          /Applications/Tailscale.app , 75 MB
+          \(cache) , 4.7 MB
+          \(support) , 90 KB
+        Personal data kept:
+          ⊙ ~/Library/Preferences/io.tailscale.ipn.macsys.plist
+          ⊙ ~/Library/HTTPStorages/io.tailscale.ipn.macsys.binarycookies
+        System: /Library/LaunchDaemons/com.tailscale.plist
+        Review only: /Library/SystemExtensions/io.tailscale
+        Cleaning files for Tailscale...
+        \(home)/Library/Logs/should-not-appear
+        """
+        let paths = LeftoverPlan.paths(in: log, excludingAppPaths: ["/Applications/Tailscale.app"])
+        #expect(paths == [
+            cache,
+            support,
+            kept,
+            home + "/Library/HTTPStorages/io.tailscale.ipn.macsys.binarycookies",
+        ])
+        let files = LeftoverPlan.collect(
+            log: log,
+            excludingAppPaths: ["/Applications/Tailscale.app"],
+            exists: { $0 == kept || $0 == support },
+            measure: { $0 == support ? 90 * 1024 : 0 }
+        )
+        #expect(files.map(\.path) == [support, kept])
+        #expect(files[0].name == "Tailscale")
+        #expect(files[0].sizeLabel == "90.0 KB")
+        #expect(files[1].sizeLabel == "空")
+        #expect(!LeftoverPlan.allowed("/Applications/Tailscale.app"))
+        #expect(!LeftoverPlan.allowed(home + "/Library"))
+        #expect(!LeftoverPlan.allowed("/private/var/folders/ab"))
+        #expect(LeftoverPlan.allowed("/private/var/folders/ab/cd/T/io.tailscale.ipn.macsys"))
+        #expect(!LeftoverPlan.allowed(home + "/Library/../../etc/passwd"))
+    }
+
     @Test func 历史() {
         let history = HistoryReport.parse(#"""
         {"limit":50,"sessions":[{"command":"clean","run_id":"","attribution":"ambiguous","started_at":"t0","ended_at":"","items":1,"size":"1MB","operation_count":1,"failed_tasks":0,"actions":{"removed":1,"trashed":0,"skipped":0,"failed":0,"rebuilt":0,"other":0}}],"deletions":[{"timestamp":"t1","mode":"remove","status":"success","size_kb":null,"path":"/tmp/a"}]}

@@ -148,7 +148,7 @@ struct AboutView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Link("github.com/tw93/Mole", destination: URL(string: "https://github.com/tw93/Mole")!)
                 Link("官方图形应用是另一套产品：mole.fit", destination: URL(string: "https://mole.fit/")!)
-                Text("界面不使用 Mole 的标志，也不提供付费应用里的逐条清理勾选、登录项、风扇、菜单栏或 AI 清理。")
+                Text("界面不使用 Mole 的标志。清理仍然是整批执行。卸载完成后，相关文件会单独列出来。不提供登录项、风扇、菜单栏或 AI 清理。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

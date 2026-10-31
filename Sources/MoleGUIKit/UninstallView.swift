@@ -5,8 +5,7 @@ final class UninstallUI: ObservableObject {
     @Published var selection = Set<String>()
     @Published var query = ""
     @Published var confirm = false
-    @Published var pendingNames: [String] = []
-    @Published var pendingLabels: [String] = []
+    @Published var pendingApps: [UninstallApp] = []
 }
 
 struct UninstallView: View {
@@ -50,18 +49,17 @@ struct UninstallView: View {
         PageShell(
             model: model,
             title: "卸载",
-            subtitle: "列表来自 mo uninstall --list。确认后执行 mo uninstall，不用在命令行里输入。文件进废纸篓，个人数据保留。不传 --with-data，也不传 --permanent。"
+            subtitle: "列表来自 mo uninstall --list。确认后执行 mo uninstall。卸载成功后会刷新列表，并列出还留在磁盘上的相关文件。不传 --permanent。"
         ) {
             FillColumn(spacing: 16) {
-                WarningNote(text: "点卸载后，窗口会再确认一次。确认后直接执行。应用文件放进废纸篓，个人数据保留。应用已经不在时，应改用清理去找残留。")
+                WarningNote(text: "点卸载后，窗口会再确认一次。确认后直接执行，应用文件放进废纸篓。卸载完成后如果还有相关文件，会再列出来，可以跳过，或放进废纸篓。")
                 HStack {
                     Button(listJob.running ? "正在列出…" : "刷新列表") { model.loadUninstallList() }
                         .disabled(model.moPath == nil || listJob.running)
                     Button("预览") { model.previewUninstall(names: selectedNames) }
                         .disabled(model.moPath == nil || preview.running || selectedNames.isEmpty)
                     Button("在伪终端中卸载") {
-                        ui.pendingNames = selectedNames
-                        ui.pendingLabels = selectedLabels
+                        ui.pendingApps = selectedApps
                         ui.confirm = true
                     }
                         .disabled(!UninstallLaunch.canStart(
@@ -146,13 +144,30 @@ struct UninstallView: View {
                 model.loadUninstallList()
             }
         }
+        .onChange(of: model.uninstallApps) { apps in
+            let ids = Set(apps.map(\.id))
+            ui.selection = ui.selection.intersection(ids)
+        }
         .alert("确认卸载？", isPresented: $ui.confirm) {
             Button("取消", role: .cancel) {}
             Button("卸载", role: .destructive) {
-                model.startUninstall(names: ui.pendingNames)
+                model.startUninstall(apps: ui.pendingApps)
             }
         } message: {
-            Text("将卸载 \(ui.pendingLabels.joined(separator: "，"))。相关文件会放进废纸篓。个人数据会保留。")
+            Text("将卸载 \(pendingLabels.joined(separator: "，"))。应用文件会放进废纸篓。完成后如果还有相关文件，可以再选择是否清理。")
+        }
+        .sheet(item: $model.leftoverReview) { review in
+            LeftoverSheet(review: review) { paths in
+                model.trashLeftovers(paths)
+            } onClose: {
+                model.leftoverReview = nil
+            }
+        }
+    }
+
+    private var pendingLabels: [String] {
+        ui.pendingApps.map { app in
+            app.name.isEmpty ? app.uninstallName : app.name
         }
     }
 
@@ -187,6 +202,163 @@ struct UninstallView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+private struct LeftoverSheet: View {
+    let review: LeftoverReview
+    var trash: ([String]) -> [String: String]
+    var onClose: () -> Void
+
+    @State private var files: [LeftoverFile]
+    @State private var selected: Set<String>
+    @State private var errorText = ""
+
+    init(
+        review: LeftoverReview,
+        trash: @escaping ([String]) -> [String: String],
+        onClose: @escaping () -> Void
+    ) {
+        self.review = review
+        self.trash = trash
+        self.onClose = onClose
+        _files = State(initialValue: review.files)
+        _selected = State(initialValue: Set(review.files.map(\.path)))
+    }
+
+    private var selectedFiles: [LeftoverFile] {
+        files.filter { selected.contains($0.path) }
+    }
+
+    private var selectedBytes: Int64 {
+        selectedFiles.reduce(0) { $0 + $1.sizeBytes }
+    }
+
+    private var allSelected: Bool {
+        !files.isEmpty && selected.count == files.count
+    }
+
+    private var cleanTitle: String {
+        guard !selected.isEmpty else { return "清理" }
+        return "清理 \(LeftoverPlan.sizeLabel(selectedBytes))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(nsImage: AppBundleIcon.image(forPath: review.apps.first?.path ?? ""))
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(review.title)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(1)
+                    Text(LeftoverPlan.sizeLabel(selectedBytes))
+                        .foregroundStyle(.secondary)
+                    Text("应用已经卸载。这些相关文件还在，清理会放进废纸篓。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+
+            Divider()
+
+            HStack {
+                Text("待移除 \(selected.count)")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(allSelected ? "取消全选" : "全选") {
+                    selected = allSelected ? [] : Set(files.map(\.path))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color(red: 0.16, green: 0.62, blue: 0.38))
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(files) { file in
+                        Button {
+                            if selected.contains(file.path) {
+                                selected.remove(file.path)
+                            } else {
+                                selected.insert(file.path)
+                            }
+                        } label: {
+                            HStack(alignment: .center, spacing: 10) {
+                                Image(systemName: selected.contains(file.path) ? "checkmark.circle.fill" : "circle")
+                                    .font(.title3)
+                                    .foregroundStyle(
+                                        selected.contains(file.path)
+                                            ? Color(red: 0.18, green: 0.70, blue: 0.42)
+                                            : Color.secondary
+                                    )
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(file.name)
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    Text(Format.homeAbbreviated(file.path))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer(minLength: 12)
+                                Text(file.sizeLabel)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Divider()
+                            .padding(.leading, 52)
+                    }
+                }
+            }
+
+            if !errorText.isEmpty {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundStyle(Theme.danger)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("跳过", action: onClose)
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.cancelAction)
+                Button(cleanTitle) { clean() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selected.isEmpty)
+            }
+            .padding(16)
+        }
+        .frame(width: 520, height: 560)
+    }
+
+    private func clean() {
+        let paths = selectedFiles.map(\.path)
+        let failed = trash(paths)
+        errorText = failed.map { path, message in
+            "\(Format.homeAbbreviated(path))：\(message)"
+        }.sorted().joined(separator: "\n")
+        let removed = Set(paths.filter { failed[$0] == nil })
+        files.removeAll { removed.contains($0.path) }
+        selected = selected.intersection(Set(files.map(\.path)))
+        if files.isEmpty {
+            onClose()
         }
     }
 }

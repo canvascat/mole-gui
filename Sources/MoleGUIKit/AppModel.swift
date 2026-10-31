@@ -18,6 +18,7 @@ final class AppModel: ObservableObject {
     let uninstallLive = PTYJob()
 
     @Published var uninstallApps: [UninstallApp] = []
+    @Published var leftoverReview: LeftoverReview?
     @Published var analyzeReport: AnalyzeReport?
     @Published var analyzeParseError: String?
     @Published var historyReport: HistoryReport?
@@ -33,9 +34,13 @@ final class AppModel: ObservableObject {
 
     init() {
         uninstallListJob.onFinish = { [weak self] in self?.ingestUninstallList() }
+        uninstallLive.onFinish = { [weak self] in self?.finishUninstall() }
         analyzeJob.onFinish = { [weak self] in self?.ingestAnalyze() }
         historyJob.onFinish = { [weak self] in self?.ingestHistory() }
     }
+
+    private var uninstallTargets: [UninstallApp] = []
+    private var uninstallGeneration = 0
 
     func locate() async {
         locating = true
@@ -201,8 +206,53 @@ final class AppModel: ObservableObject {
         uninstallPreview.start(moPath: moPath, action: .uninstallDryRun(names: names), kind: .preview)
     }
 
-    func startUninstall(names: [String]) {
-        uninstallLive.start(moPath: moPath, names: names)
+    func startUninstall(apps: [UninstallApp]) {
+        uninstallGeneration += 1
+        uninstallTargets = apps
+        leftoverReview = nil
+        uninstallLive.start(moPath: moPath, names: apps.map(\.uninstallName))
+    }
+
+    func trashLeftovers(_ paths: [String]) -> [String: String] {
+        let offered = Set(leftoverReview?.files.map(\.path) ?? [])
+        var failed: [String: String] = [:]
+        for path in paths {
+            guard offered.contains(path), LeftoverPlan.allowed(path) else {
+                failed[path] = "这个路径不在本次卸载留下的相关文件里。"
+                continue
+            }
+            do {
+                try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+            } catch {
+                failed[path] = error.localizedDescription
+            }
+        }
+        return failed
+    }
+
+    private func finishUninstall() {
+        guard let code = uninstallLive.exitCode else { return }
+        let stopped = uninstallLive.stopped
+        let generation = uninstallGeneration
+        let log = uninstallLive.stdout
+        let targets = uninstallTargets
+        if code == 0, !stopped {
+            let names = Set(targets.map(\.uninstallName))
+            let paths = Set(targets.map(\.path))
+            uninstallApps.removeAll { app in
+                names.contains(app.uninstallName) || paths.contains(app.path)
+            }
+        }
+        loadUninstallList()
+        guard code == 0, !stopped else { return }
+        let excluded = Set(targets.map(\.path))
+        Task {
+            let files = await Task.detached(priority: .userInitiated) {
+                LeftoverPlan.collect(log: log, excludingAppPaths: excluded)
+            }.value
+            guard generation == self.uninstallGeneration, !files.isEmpty else { return }
+            leftoverReview = LeftoverReview(id: UUID().uuidString, apps: targets, files: files)
+        }
     }
 
     func volumes() -> [String] {

@@ -633,8 +633,10 @@ final class PTYJob: ObservableObject {
     @Published var commandLine = ""
     @Published var stopped = false
 
+    var onFinish: (() -> Void)?
     private var live: PTYRun?
     private var confirmArmed = false
+    private var finishNotified = false
 
     func start(moPath: String?, names: [String]) {
         error = nil
@@ -660,6 +662,7 @@ final class PTYJob: ObservableObject {
         let run = PTYRun()
         live = run
         confirmArmed = false
+        finishNotified = false
         stdout = ""
         stderr = ""
         exitCode = nil
@@ -706,6 +709,10 @@ final class PTYJob: ObservableObject {
         if let code = snap.exitCode {
             exitCode = code
             running = false
+            if !finishNotified {
+                finishNotified = true
+                onFinish?()
+            }
         } else {
             running = snap.running
         }
