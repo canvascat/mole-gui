@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 final class UninstallUI: ObservableObject {
@@ -65,11 +66,17 @@ struct UninstallView: View {
                         TextField("搜索名称或 bundle id", text: $ui.query)
                             .textFieldStyle(.roundedBorder)
                         List(filtered, selection: $ui.selection) { app in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(app.name.isEmpty ? app.uninstallName : app.name)
-                                Text("\(app.source) · \(app.size)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            HStack(alignment: .center, spacing: 8) {
+                                Image(nsImage: AppBundleIcon.image(forPath: app.path))
+                                    .resizable()
+                                    .interpolation(.high)
+                                    .frame(width: 28, height: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(app.name.isEmpty ? app.uninstallName : app.name)
+                                    Text("\(app.source) · \(app.size)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             .tag(app.id)
                         }
@@ -170,5 +177,27 @@ struct UninstallView: View {
     private func sendDraft() {
         terminal.sendLine(ui.draft)
         ui.draft = ""
+    }
+}
+
+enum AppBundleIcon {
+    private static var cache: [String: NSImage] = [:]
+
+    static func image(forPath path: String) -> NSImage {
+        if let cached = cache[path] { return cached }
+        let image = load(path)
+        cache[path] = image
+        return image
+    }
+
+    private static func load(_ path: String) -> NSImage {
+        let placeholder = NSWorkspace.shared.icon(for: .application)
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, FileManager.default.fileExists(atPath: trimmed) else {
+            return placeholder
+        }
+        let icon = NSWorkspace.shared.icon(forFile: trimmed)
+        guard icon.isValid else { return placeholder }
+        return icon
     }
 }
