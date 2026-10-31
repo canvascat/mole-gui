@@ -43,7 +43,7 @@ struct PageShell<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        FillColumn(spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.title2.weight(.semibold))
@@ -56,110 +56,113 @@ struct PageShell<Content: View>: View {
                 MissingMoCard()
             }
             content()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .fillsRemainder()
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
-struct BoundedBox<Content: View>: View {
-    var minHeight: CGFloat = 0
-    var maxHeight: CGFloat?
-    @ViewBuilder var content: () -> Content
+struct RemainderKey: LayoutValueKey {
+    static let defaultValue = false
+}
 
-    var body: some View {
-        layoutBase
-            .overlay(alignment: .topLeading) {
-                GeometryReader { proxy in
-                    content()
-                        .frame(
-                            width: max(proxy.size.width, 0),
-                            height: max(proxy.size.height, 0),
-                            alignment: .topLeading
-                        )
-                }
-            }
+extension View {
+    func fillsRemainder() -> some View {
+        layoutValue(key: RemainderKey.self, value: true)
+    }
+}
+
+struct FillColumn: Layout {
+    var spacing: CGFloat = 16
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        CGSize(width: proposal.width ?? 800, height: proposal.height ?? 640)
     }
 
-    @ViewBuilder
-    private var layoutBase: some View {
-        if let maxHeight, maxHeight <= minHeight {
-            Color.clear
-                .frame(maxWidth: .infinity)
-                .frame(height: minHeight)
-        } else {
-            Color.clear
-                .frame(maxWidth: .infinity, minHeight: minHeight, maxHeight: maxHeight ?? .infinity)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard !subviews.isEmpty else { return }
+        let width = bounds.width
+        let flex = subviews.indices.first { subviews[$0][RemainderKey.self] } ?? subviews.indices.last!
+        var fixed: CGFloat = 0
+        for index in subviews.indices where index != flex {
+            fixed += subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        }
+        let gaps = spacing * CGFloat(max(subviews.count - 1, 0))
+        let flexHeight = max(0, bounds.height - fixed - gaps)
+        var y = bounds.minY
+        for index in subviews.indices {
+            let height = index == flex
+                ? flexHeight
+                : subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: width, height: height)
+            )
+            y += height + spacing
         }
     }
 }
 
-struct BoundedScroll<Content: View>: View {
-    var minHeight: CGFloat = 0
-    var maxHeight: CGFloat?
+struct PaneScroll<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        BoundedBox(minHeight: minHeight, maxHeight: maxHeight) {
+        GeometryReader { proxy in
             ScrollView {
                 content()
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .frame(width: max(proxy.size.width, 0), height: max(proxy.size.height, 0), alignment: .topLeading)
         }
     }
 }
 
-struct LogBox: View {
+struct HorizontalStrip<Content: View>: View {
+    var height: CGFloat = 32
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView(.horizontal, showsIndicators: true) {
+                content()
+            }
+            .frame(width: max(proxy.size.width, 0), height: max(proxy.size.height, 0), alignment: .leading)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+    }
+}
+
+struct LogPane: View {
     var title: String?
     var text: String
-    var minHeight: CGFloat = 120
-    var maxHeight: CGFloat?
     var foreground = Color.primary
     var background = Color(nsColor: .textBackgroundColor)
     var empty = "尚无输出"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        FillColumn(spacing: 6) {
             if let title {
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            BoundedBox(minHeight: 0) {
-                ScrollViewReader { reader in
-                    ScrollView {
-                        Text(text.isEmpty ? empty : text)
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(foreground)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                            .id("log-tail")
-                    }
-                    .onAppear {
-                        reader.scrollTo("log-tail", anchor: .bottom)
-                    }
-                    .onChange(of: text) { _ in
-                        DispatchQueue.main.async {
-                            reader.scrollTo("log-tail", anchor: .bottom)
-                        }
-                    }
-                }
+            PaneScroll {
+                Text(text.isEmpty ? empty : text)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(foreground)
+                    .textSelection(.enabled)
+                    .padding(10)
             }
             .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(Color.primary.opacity(0.08))
             )
+            .fillsRemainder()
         }
-        .frame(
-            maxWidth: .infinity,
-            minHeight: maxHeight ?? minHeight,
-            idealHeight: maxHeight ?? minHeight,
-            maxHeight: maxHeight ?? .infinity,
-            alignment: .topLeading
-        )
     }
 }
 
@@ -238,7 +241,7 @@ struct StreamPanes: View {
     var destructive = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        FillColumn(spacing: 10) {
             if !job.commandLine.isEmpty {
                 Text(job.commandLine)
                     .font(.system(.caption, design: .monospaced))
@@ -250,15 +253,23 @@ struct StreamPanes: View {
                     .foregroundStyle(Theme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            LogBox(title: "标准输出", text: job.stdout, minHeight: 120)
-            LogBox(title: "标准错误", text: job.stderr, minHeight: 120)
+            GeometryReader { proxy in
+                let gap: CGFloat = 10
+                let height = max((proxy.size.height - gap) / 2, 0)
+                VStack(spacing: gap) {
+                    LogPane(title: "标准输出", text: job.stdout)
+                        .frame(height: height)
+                    LogPane(title: "标准错误", text: job.stderr)
+                        .frame(height: height)
+                }
+            }
+            .fillsRemainder()
             if let code = job.exitCode {
                 Text(stopCaption(code))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func stopCaption(_ code: Int32) -> String {

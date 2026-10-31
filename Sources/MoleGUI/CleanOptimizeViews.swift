@@ -16,7 +16,7 @@ struct CleanView: View {
             title: "清理",
             subtitle: "先看 mo clean --dry-run 的原文，确认后才执行 mo clean。没有逐条复选框。"
         ) {
-            VStack(alignment: .leading, spacing: 16) {
+            FillColumn(spacing: 16) {
                 WarningNote(text: "这是整批用户级清理，永久删除，默认包含废纸篓，不能在窗口里取消其中几行。取消必须发生在启动之前。开始之后可以停止进程，但已经删掉的文件不会回来。系统缓存可能弹出 macOS 自己的管理员授权，本窗口不会用 sudo。")
                 HStack {
                     Button("预览") { model.previewClean() }
@@ -45,8 +45,8 @@ struct CleanView: View {
                     Text(terminalError).foregroundStyle(Theme.danger)
                 }
                 StreamPanes(job: job, destructive: true)
+                    .fillsRemainder()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .alert("开始整批清理？", isPresented: $ui.confirm) {
             Button("取消", role: .cancel) {}
@@ -72,7 +72,7 @@ struct OptimizeView: View {
             title: "维护",
             subtitle: "先看 mo optimize --dry-run，确认后再执行 mo optimize。"
         ) {
-            VStack(alignment: .leading, spacing: 16) {
+            FillColumn(spacing: 16) {
                 WarningNote(text: "维护会改系统状态。如果需要管理员权限，CLI 会自己弹出一次密码框。本程序不保存密码，也不用 sudo 启动 mo。")
                 HStack {
                     Button("预览") { model.previewOptimize() }
@@ -89,8 +89,8 @@ struct OptimizeView: View {
                     InfoNote(text: "请先预览。预览成功之后，「开始维护」才会亮。")
                 }
                 StreamPanes(job: job, destructive: true)
+                    .fillsRemainder()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .alert("开始维护？", isPresented: $ui.confirm) {
             Button("取消", role: .cancel) {}
@@ -118,7 +118,7 @@ struct PurgeView: View {
             title: "项目产物",
             subtitle: "mo purge --dry-run 只展示候选。删除只有一个动作：确认后执行 mo purge --yes。"
         ) {
-            VStack(alignment: .leading, spacing: 16) {
+            FillColumn(spacing: 16) {
                 WarningNote(text: "这会永久删除全部非近期、非云同步的候选，不能只删其中几项，也不会进废纸篓。node_modules、构建目录一类东西删了要重新安装。更稳的做法是在终端里自己跑 mo purge。")
                 HStack {
                     Button("预览") { model.previewPurge() }
@@ -146,8 +146,8 @@ struct PurgeView: View {
                     Text(terminalError).foregroundStyle(Theme.danger)
                 }
                 StreamPanes(job: job, destructive: true)
+                    .fillsRemainder()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .sheet(isPresented: $ui.confirm) {
             VStack(alignment: .leading, spacing: 14) {

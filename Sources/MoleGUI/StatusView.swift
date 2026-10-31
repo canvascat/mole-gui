@@ -14,7 +14,7 @@ struct StatusView: View {
             title: "状态",
             subtitle: "定时执行 mo status --json。进程表只展示，不能结束进程。僵尸进程不改变健康分。"
         ) {
-            VStack(alignment: .leading, spacing: 16) {
+            FillColumn(spacing: 16) {
                 HStack {
                     Toggle("更快刷新（2 秒）", isOn: $ui.fast)
                         .toggleStyle(.switch)
@@ -37,7 +37,7 @@ struct StatusView: View {
                     WarningNote(text: error)
                 }
 
-                BoundedScroll(minHeight: 200) {
+                PaneScroll {
                     VStack(alignment: .leading, spacing: 12) {
                         header
                         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
@@ -47,12 +47,13 @@ struct StatusView: View {
                         diskCard
                         processCard
                         if !model.statusStderr.isEmpty {
-                            LogBox(title: "标准错误", text: model.statusStderr, minHeight: 80, maxHeight: 160)
+                            LogPane(title: "标准错误", text: model.statusStderr)
+                                .frame(height: 140)
                         }
                     }
                 }
+                .fillsRemainder()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .task(id: ui.fast) {
             await model.runStatusLoop(fast: ui.fast)

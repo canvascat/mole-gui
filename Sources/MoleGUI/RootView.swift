@@ -10,7 +10,7 @@ struct RootView: View {
 
     var body: some View {
         NavigationSplitView {
-            VStack(alignment: .leading, spacing: 0) {
+            FillColumn(spacing: 0) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("mole-gui")
                         .font(.headline)
@@ -28,13 +28,12 @@ struct RootView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 8)
 
-                BoundedBox(minHeight: 160) {
-                    List(AppSection.allCases, selection: $sidebar.section) { item in
-                        Label(item.title, systemImage: item.symbol)
-                            .tag(item)
-                    }
-                    .listStyle(.sidebar)
+                List(AppSection.allCases, selection: $sidebar.section) { item in
+                    Label(item.title, systemImage: item.symbol)
+                        .tag(item)
                 }
+                .listStyle(.sidebar)
+                .fillsRemainder()
 
                 Button("关于") { model.showAbout = true }
                     .buttonStyle(.borderless)

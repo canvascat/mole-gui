@@ -19,7 +19,7 @@ struct AnalyzeView: View {
             title: "磁盘",
             subtitle: "mo analyze --json 只读。这一页没有删除按钮。数字是扫描估算，不保证能腾出同样的空间。"
         ) {
-            VStack(alignment: .leading, spacing: 16) {
+            FillColumn(spacing: 16) {
                 InfoNote(text: "未完成的大小后面会加 +。大小为 0 且状态是无法读取时，不代表目录是空的。扫资源库深处时，把完全磁盘访问权限授给 mole-gui，它才是启动 mo 的程序。失败时显示 CLI 原文，不会转去执行删除。")
                 HStack {
                     Button("主目录") { open(NSHomeDirectory(), reset: true) }
@@ -44,8 +44,8 @@ struct AnalyzeView: View {
                 }
                 .buttonStyle(.bordered)
 
-                BoundedBox(minHeight: 36, maxHeight: 36) {
-                    ScrollView(.horizontal, showsIndicators: false) {
+                if !ui.trail.isEmpty {
+                    HorizontalStrip(height: 32) {
                         HStack(spacing: 6) {
                             ForEach(Array(ui.trail.enumerated()), id: \.offset) { index, path in
                                 Button(Format.homeAbbreviated(path)) {
@@ -71,28 +71,9 @@ struct AnalyzeView: View {
                     Text(parseError).foregroundStyle(Theme.danger)
                 }
 
-                if let report = model.analyzeReport {
-                    summary(report)
-                    BoundedScroll(minHeight: 160) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            entryList(report)
-                            if !report.largeFiles.isEmpty {
-                                largeFiles(report.largeFiles)
-                            }
-                        }
-                    }
-                }
-
-                if !job.stderr.isEmpty {
-                    LogBox(
-                        title: "标准错误",
-                        text: job.stderr,
-                        minHeight: 140,
-                        maxHeight: model.analyzeReport == nil ? nil : 180
-                    )
-                }
+                scanBody
+                    .fillsRemainder()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .fileImporter(isPresented: $ui.picking, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {
@@ -110,6 +91,34 @@ struct AnalyzeView: View {
             if path != nil, ui.trail.isEmpty {
                 open(NSHomeDirectory(), reset: true)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var scanBody: some View {
+        if let report = model.analyzeReport {
+            FillColumn(spacing: 12) {
+                summary(report)
+                PaneScroll {
+                    VStack(alignment: .leading, spacing: 12) {
+                        entryList(report)
+                        if !report.largeFiles.isEmpty {
+                            largeFiles(report.largeFiles)
+                        }
+                    }
+                }
+                .fillsRemainder()
+                if !job.stderr.isEmpty {
+                    LogPane(title: "标准错误", text: job.stderr)
+                        .frame(height: 150)
+                }
+            }
+        } else {
+            LogPane(
+                title: "标准错误",
+                text: job.stderr,
+                empty: job.running ? "正在扫描…" : "选择目录后，扫描输出会显示在这里。"
+            )
         }
     }
 
