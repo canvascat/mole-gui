@@ -135,6 +135,10 @@ expect(ExecutionGate.refuse(acceptsExecute: true, phrase: nil, action: .clean) =
 expect(ExecutionGate.refuse(acceptsExecute: true, phrase: "删除", action: .purgeYes) != nil, "确认语不对不能 purge")
 expect(ExecutionGate.refuse(acceptsExecute: true, phrase: "永久删除", action: .purgeYes) == nil, "确认语正确可以 purge")
 expect(ExecutionGate.refuse(acceptsExecute: true, phrase: nil, action: .cleanDryRun) != nil, "预览命令不能当执行")
+expect(UninstallLaunch.canStart(moFound: true, terminalRunning: false, names: ["Tailscale"]), "选中后可以在伪终端中卸载")
+expect(!UninstallLaunch.canStart(moFound: true, terminalRunning: false, names: []), "没选中不能卸载")
+expect(!UninstallLaunch.canStart(moFound: false, terminalRunning: false, names: ["Tailscale"]), "没有 mo 不能卸载")
+expect(!UninstallLaunch.canStart(moFound: true, terminalRunning: true, names: ["Tailscale"]), "卸载进行中不能再开")
 
 expect(Format.bytes(1536, partial: true) == "1.5 KB+", "未完成大小带加号", Format.bytes(1536, partial: true))
 expect(Format.bytes(0, scanStatus: "unavailable") == "无法读取", "0 且无法读取")

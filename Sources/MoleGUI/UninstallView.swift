@@ -47,7 +47,11 @@ struct UninstallView: View {
                     Button("预览") { model.previewUninstall(names: selectedNames) }
                         .disabled(model.moPath == nil || preview.running || selectedNames.isEmpty)
                     Button("在伪终端中卸载") { model.startUninstall(names: selectedNames) }
-                        .disabled(model.moPath == nil || terminal.running || !preview.acceptsExecute || selectedNames.isEmpty)
+                        .disabled(!UninstallLaunch.canStart(
+                            moFound: model.moPath != nil,
+                            terminalRunning: terminal.running,
+                            names: selectedNames
+                        ))
                         .tint(Theme.danger)
                     if terminal.running {
                         Button("停止") { terminal.stop() }
@@ -118,9 +122,6 @@ struct UninstallView: View {
             if path != nil, model.uninstallApps.isEmpty, !listJob.running {
                 model.loadUninstallList()
             }
-        }
-        .onChange(of: ui.selection) { _ in
-            preview.acceptsExecute = false
         }
     }
 

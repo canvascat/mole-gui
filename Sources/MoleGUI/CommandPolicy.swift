@@ -212,6 +212,12 @@ enum CommandPolicy {
     }
 }
 
+enum UninstallLaunch {
+    static func canStart(moFound: Bool, terminalRunning: Bool, names: [String]) -> Bool {
+        moFound && !terminalRunning && !names.isEmpty
+    }
+}
+
 enum ExecutionGate {
     static func refuse(acceptsExecute: Bool, phrase: String?, action: MoleSubcommand) -> String? {
         if !CommandPolicy.isExecute(action) {

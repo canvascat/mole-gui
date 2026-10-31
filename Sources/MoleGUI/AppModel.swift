@@ -202,11 +202,6 @@ final class AppModel: ObservableObject {
     }
 
     func startUninstall(names: [String]) {
-        guard uninstallPreview.acceptsExecute else {
-            uninstallLive.error = "请先完成预览，再在伪终端里卸载。"
-            return
-        }
-        uninstallPreview.acceptsExecute = false
         uninstallLive.start(moPath: moPath, names: names)
     }
 
