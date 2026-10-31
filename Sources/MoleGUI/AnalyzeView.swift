@@ -19,71 +19,80 @@ struct AnalyzeView: View {
             title: "磁盘",
             subtitle: "mo analyze --json 只读。这一页没有删除按钮。数字是扫描估算，不保证能腾出同样的空间。"
         ) {
-            InfoNote(text: "未完成的大小后面会加 +。大小为 0 且状态是无法读取时，不代表目录是空的。扫资源库深处时，把完全磁盘访问权限授给 mole-gui，它才是启动 mo 的程序。失败时显示 CLI 原文，不会转去执行删除。")
-            HStack {
-                Button("主目录") { open(NSHomeDirectory(), reset: true) }
-                    .disabled(model.moPath == nil || job.running)
-                Button("选择文件夹") { ui.picking = true }
-                    .disabled(model.moPath == nil || job.running)
-                Menu("选择 /Volumes") {
-                    let volumes = model.volumes()
-                    if volumes.isEmpty {
-                        Button("没有挂载项") {}.disabled(true)
-                    }
-                    ForEach(volumes, id: \.self) { path in
-                        Button(path) { open(path, reset: true) }
-                    }
-                }
-                .disabled(model.moPath == nil || job.running)
-                if job.running {
-                    Button("停止") { job.stop() }
-                    ProgressView().controlSize(.small)
-                }
-                Spacer()
-            }
-            .buttonStyle(.bordered)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(Array(ui.trail.enumerated()), id: \.offset) { index, path in
-                        Button(Format.homeAbbreviated(path)) {
-                            ui.trail = Array(ui.trail.prefix(index + 1))
-                            model.scan(path: path)
+            VStack(alignment: .leading, spacing: 16) {
+                InfoNote(text: "未完成的大小后面会加 +。大小为 0 且状态是无法读取时，不代表目录是空的。扫资源库深处时，把完全磁盘访问权限授给 mole-gui，它才是启动 mo 的程序。失败时显示 CLI 原文，不会转去执行删除。")
+                HStack {
+                    Button("主目录") { open(NSHomeDirectory(), reset: true) }
+                        .disabled(model.moPath == nil || job.running)
+                    Button("选择文件夹") { ui.picking = true }
+                        .disabled(model.moPath == nil || job.running)
+                    Menu("选择 /Volumes") {
+                        let volumes = model.volumes()
+                        if volumes.isEmpty {
+                            Button("没有挂载项") {}.disabled(true)
                         }
-                        .buttonStyle(.borderless)
-                        .disabled(job.running)
-                        if index < ui.trail.count - 1 {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                        ForEach(volumes, id: \.self) { path in
+                            Button(path) { open(path, reset: true) }
                         }
                     }
+                    .disabled(model.moPath == nil || job.running)
+                    if job.running {
+                        Button("停止") { job.stop() }
+                        ProgressView().controlSize(.small)
+                    }
+                    Spacer()
+                }
+                .buttonStyle(.bordered)
+
+                BoundedBox(minHeight: 36, maxHeight: 36) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(ui.trail.enumerated()), id: \.offset) { index, path in
+                                Button(Format.homeAbbreviated(path)) {
+                                    ui.trail = Array(ui.trail.prefix(index + 1))
+                                    model.scan(path: path)
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(job.running)
+                                if index < ui.trail.count - 1 {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let error = job.error {
+                    Text(error).foregroundStyle(Theme.danger)
+                }
+                if let parseError = model.analyzeParseError {
+                    Text(parseError).foregroundStyle(Theme.danger)
+                }
+
+                if let report = model.analyzeReport {
+                    summary(report)
+                    BoundedScroll(minHeight: 160) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            entryList(report)
+                            if !report.largeFiles.isEmpty {
+                                largeFiles(report.largeFiles)
+                            }
+                        }
+                    }
+                }
+
+                if !job.stderr.isEmpty {
+                    LogBox(
+                        title: "标准错误",
+                        text: job.stderr,
+                        minHeight: 140,
+                        maxHeight: model.analyzeReport == nil ? nil : 180
+                    )
                 }
             }
-
-            if let error = job.error {
-                Text(error).foregroundStyle(Theme.danger)
-            }
-            if let parseError = model.analyzeParseError {
-                Text(parseError).foregroundStyle(Theme.danger)
-            }
-
-            if let report = model.analyzeReport {
-                summary(report)
-                entryList(report)
-                if !report.largeFiles.isEmpty {
-                    largeFiles(report.largeFiles)
-                }
-            }
-
-            if !job.stderr.isEmpty {
-                MetricCard(title: "标准错误") {
-                    Text(job.stderr)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .fileImporter(isPresented: $ui.picking, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {

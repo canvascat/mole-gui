@@ -28,11 +28,13 @@ struct RootView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 8)
 
-                List(AppSection.allCases, selection: $sidebar.section) { item in
-                    Label(item.title, systemImage: item.symbol)
-                        .tag(item)
+                BoundedBox(minHeight: 160) {
+                    List(AppSection.allCases, selection: $sidebar.section) { item in
+                        Label(item.title, systemImage: item.symbol)
+                            .tag(item)
+                    }
+                    .listStyle(.sidebar)
                 }
-                .listStyle(.sidebar)
 
                 Button("关于") { model.showAbout = true }
                     .buttonStyle(.borderless)
@@ -58,6 +60,7 @@ struct RootView: View {
                 HistoryView(model: model, job: model.historyJob)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $model.showAbout) {
             AboutView(model: model)
         }

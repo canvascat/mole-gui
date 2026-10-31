@@ -56,9 +56,110 @@ struct PageShell<Content: View>: View {
                 MissingMoCard()
             }
             content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+struct BoundedBox<Content: View>: View {
+    var minHeight: CGFloat = 0
+    var maxHeight: CGFloat?
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        layoutBase
+            .overlay(alignment: .topLeading) {
+                GeometryReader { proxy in
+                    content()
+                        .frame(
+                            width: max(proxy.size.width, 0),
+                            height: max(proxy.size.height, 0),
+                            alignment: .topLeading
+                        )
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var layoutBase: some View {
+        if let maxHeight, maxHeight <= minHeight {
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .frame(height: minHeight)
+        } else {
+            Color.clear
+                .frame(maxWidth: .infinity, minHeight: minHeight, maxHeight: maxHeight ?? .infinity)
+        }
+    }
+}
+
+struct BoundedScroll<Content: View>: View {
+    var minHeight: CGFloat = 0
+    var maxHeight: CGFloat?
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        BoundedBox(minHeight: minHeight, maxHeight: maxHeight) {
+            ScrollView {
+                content()
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+}
+
+struct LogBox: View {
+    var title: String?
+    var text: String
+    var minHeight: CGFloat = 120
+    var maxHeight: CGFloat?
+    var foreground = Color.primary
+    var background = Color(nsColor: .textBackgroundColor)
+    var empty = "尚无输出"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let title {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            BoundedBox(minHeight: 0) {
+                ScrollViewReader { reader in
+                    ScrollView {
+                        Text(text.isEmpty ? empty : text)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(foreground)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .id("log-tail")
+                    }
+                    .onAppear {
+                        reader.scrollTo("log-tail", anchor: .bottom)
+                    }
+                    .onChange(of: text) { _ in
+                        DispatchQueue.main.async {
+                            reader.scrollTo("log-tail", anchor: .bottom)
+                        }
+                    }
+                }
+            }
+            .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08))
+            )
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: maxHeight ?? minHeight,
+            idealHeight: maxHeight ?? minHeight,
+            maxHeight: maxHeight ?? .infinity,
+            alignment: .topLeading
+        )
     }
 }
 
@@ -149,8 +250,8 @@ struct StreamPanes: View {
                     .foregroundStyle(Theme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            streamBox("标准输出", job.stdout)
-            streamBox("标准错误", job.stderr)
+            LogBox(title: "标准输出", text: job.stdout, minHeight: 120)
+            LogBox(title: "标准错误", text: job.stderr, minHeight: 120)
             if let code = job.exitCode {
                 Text(stopCaption(code))
                     .font(.caption)
@@ -168,28 +269,6 @@ struct StreamPanes: View {
             return "已停止，退出码 \(code)。"
         }
         return "退出码 \(code)"
-    }
-
-    private func streamBox(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            ScrollView {
-                Text(text.isEmpty ? "尚无输出" : text)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08))
-            )
-        }
-        .frame(minHeight: 120, maxHeight: .infinity)
     }
 }
 

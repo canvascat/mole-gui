@@ -14,47 +14,45 @@ struct StatusView: View {
             title: "状态",
             subtitle: "定时执行 mo status --json。进程表只展示，不能结束进程。僵尸进程不改变健康分。"
         ) {
-            HStack {
-                Toggle("更快刷新（2 秒）", isOn: $ui.fast)
-                    .toggleStyle(.switch)
-                Button("立即刷新") {
-                    Task { await model.refreshStatus() }
-                }
-                .disabled(model.moPath == nil)
-                if model.statusRunning {
-                    ProgressView().controlSize(.small)
-                }
-                Spacer()
-                if let updated = model.statusUpdatedAt {
-                    Text(updated.formatted(date: .omitted, time: .standard))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if let error = model.statusError {
-                WarningNote(text: error)
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    header
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                        cpuCard
-                        memoryCard
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Toggle("更快刷新（2 秒）", isOn: $ui.fast)
+                        .toggleStyle(.switch)
+                    Button("立即刷新") {
+                        Task { await model.refreshStatus() }
                     }
-                    diskCard
-                    processCard
-                    if !model.statusStderr.isEmpty {
-                        MetricCard(title: "标准错误") {
-                            Text(model.statusStderr)
-                                .font(.system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                    .disabled(model.moPath == nil)
+                    if model.statusRunning {
+                        ProgressView().controlSize(.small)
+                    }
+                    Spacer()
+                    if let updated = model.statusUpdatedAt {
+                        Text(updated.formatted(date: .omitted, time: .standard))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let error = model.statusError {
+                    WarningNote(text: error)
+                }
+
+                BoundedScroll(minHeight: 200) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        header
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            cpuCard
+                            memoryCard
+                        }
+                        diskCard
+                        processCard
+                        if !model.statusStderr.isEmpty {
+                            LogBox(title: "标准错误", text: model.statusStderr, minHeight: 80, maxHeight: 160)
                         }
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .task(id: ui.fast) {
             await model.runStatusLoop(fast: ui.fast)

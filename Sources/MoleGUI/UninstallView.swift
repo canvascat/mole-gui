@@ -39,62 +39,67 @@ struct UninstallView: View {
             title: "卸载",
             subtitle: "列表来自 mo uninstall --list。真正卸载在伪终端里执行，让 CLI 自己的确认继续生效。不传 --with-data，也不传 --permanent。"
         ) {
-            WarningNote(text: "窗口里的选择不能代替 CLI 的确认。默认保留个人数据。文件默认进废纸篓。应用已经不在时，应改用清理去找残留。")
-            HStack {
-                Button(listJob.running ? "正在列出…" : "刷新列表") { model.loadUninstallList() }
-                    .disabled(model.moPath == nil || listJob.running)
-                Button("预览") { model.previewUninstall(names: selectedNames) }
-                    .disabled(model.moPath == nil || preview.running || selectedNames.isEmpty)
-                Button("在伪终端中卸载") { model.startUninstall(names: selectedNames) }
-                    .disabled(model.moPath == nil || terminal.running || !preview.acceptsExecute || selectedNames.isEmpty)
-                    .tint(Theme.danger)
-                if terminal.running {
-                    Button("停止") { terminal.stop() }
+            VStack(alignment: .leading, spacing: 16) {
+                WarningNote(text: "窗口里的选择不能代替 CLI 的确认。默认保留个人数据。文件默认进废纸篓。应用已经不在时，应改用清理去找残留。")
+                HStack {
+                    Button(listJob.running ? "正在列出…" : "刷新列表") { model.loadUninstallList() }
+                        .disabled(model.moPath == nil || listJob.running)
+                    Button("预览") { model.previewUninstall(names: selectedNames) }
+                        .disabled(model.moPath == nil || preview.running || selectedNames.isEmpty)
+                    Button("在伪终端中卸载") { model.startUninstall(names: selectedNames) }
+                        .disabled(model.moPath == nil || terminal.running || !preview.acceptsExecute || selectedNames.isEmpty)
+                        .tint(Theme.danger)
+                    if terminal.running {
+                        Button("停止") { terminal.stop() }
+                    }
+                    Spacer()
                 }
-                Spacer()
-            }
-            .buttonStyle(.bordered)
+                .buttonStyle(.bordered)
 
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("搜索名称或 bundle id", text: $ui.query)
-                        .textFieldStyle(.roundedBorder)
-                    List(filtered, selection: $ui.selection) { app in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(app.name.isEmpty ? app.uninstallName : app.name)
-                            Text("\(app.source) · \(app.size)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("搜索名称或 bundle id", text: $ui.query)
+                            .textFieldStyle(.roundedBorder)
+                        BoundedBox(minHeight: 180) {
+                            List(filtered, selection: $ui.selection) { app in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(app.name.isEmpty ? app.uninstallName : app.name)
+                                    Text("\(app.source) · \(app.size)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .tag(app.id)
+                            }
                         }
-                        .tag(app.id)
                     }
-                    .frame(minWidth: 280, maxWidth: 360, maxHeight: .infinity)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    if selectedNames.isEmpty {
-                        Text("先选一个或多个应用。后续参数用 uninstall_name，不用显示名猜测。")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("将使用的名字：\(selectedNames.joined(separator: "，"))")
-                            .textSelection(.enabled)
+                    .frame(minWidth: 280, maxWidth: 360, maxHeight: .infinity, alignment: .topLeading)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if selectedNames.isEmpty {
+                            Text("先选一个或多个应用。后续参数用 uninstall_name，不用显示名猜测。")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("将使用的名字：\(selectedNames.joined(separator: "，"))")
+                                .textSelection(.enabled)
+                        }
+                        if let error = listJob.error {
+                            Text(error).foregroundStyle(Theme.danger)
+                        }
+                        if listJob.exitCode == 0, model.uninstallApps.isEmpty, !listJob.stdout.isEmpty {
+                            Text("没能解析应用列表 JSON。")
+                                .foregroundStyle(Theme.danger)
+                        }
+                        if !listJob.stderr.isEmpty {
+                            LogBox(title: "标准错误", text: listJob.stderr, minHeight: 72, maxHeight: 120)
+                        }
+                        StreamPanes(job: preview)
+                        terminalPane
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
-                    if let error = listJob.error {
-                        Text(error).foregroundStyle(Theme.danger)
-                    }
-                    if listJob.exitCode == 0, model.uninstallApps.isEmpty, !listJob.stdout.isEmpty {
-                        Text("没能解析应用列表 JSON。")
-                            .foregroundStyle(Theme.danger)
-                    }
-                    if !listJob.stderr.isEmpty {
-                        Text(listJob.stderr)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-                    StreamPanes(job: preview)
-                    terminalPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .task {
             if model.uninstallApps.isEmpty, !listJob.running, model.moPath != nil {
@@ -127,16 +132,13 @@ struct UninstallView: View {
             if let error = terminal.error {
                 Text(error).foregroundStyle(Theme.danger)
             }
-            ScrollView {
-                Text(terminal.transcript.isEmpty ? "卸载开始后，CLI 的预览会出现在这里。" : terminal.transcript)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(Color(red: 0.93, green: 0.95, blue: 0.90))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-            }
-            .frame(minHeight: 140, maxHeight: .infinity)
-            .background(Color(red: 0.12, green: 0.13, blue: 0.11), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            LogBox(
+                text: terminal.transcript,
+                minHeight: 140,
+                foreground: Color(red: 0.93, green: 0.95, blue: 0.90),
+                background: Color(red: 0.12, green: 0.13, blue: 0.11),
+                empty: "卸载开始后，CLI 的预览会出现在这里。"
+            )
             HStack {
                 TextField("发送到 CLI", text: $ui.draft)
                     .textFieldStyle(.roundedBorder)

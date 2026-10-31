@@ -10,30 +10,31 @@ struct HistoryView: View {
             title: "记录",
             subtitle: "mo history --json --limit 50。只展示最近做了什么，不能撤销。"
         ) {
-            InfoNote(text: "日志里记着删过的路径，这一页会再显示一遍。ended_at 为空表示没有记下结束。归属不确定的记录不要当成同一次操作。")
-            HStack {
-                Button(job.running ? "正在读取…" : "刷新") { model.loadHistory() }
-                    .disabled(model.moPath == nil || job.running)
-                Spacer()
-            }
-            .buttonStyle(.bordered)
-            if let error = job.error {
-                Text(error).foregroundStyle(Theme.danger)
-            }
-            if let parseError = model.historyParseError {
-                Text(parseError).foregroundStyle(Theme.danger)
-            }
-            if !job.stderr.isEmpty {
-                Text(job.stderr)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    sessions
-                    deletions
+            VStack(alignment: .leading, spacing: 16) {
+                InfoNote(text: "日志里记着删过的路径，这一页会再显示一遍。ended_at 为空表示没有记下结束。归属不确定的记录不要当成同一次操作。")
+                HStack {
+                    Button(job.running ? "正在读取…" : "刷新") { model.loadHistory() }
+                        .disabled(model.moPath == nil || job.running)
+                    Spacer()
+                }
+                .buttonStyle(.bordered)
+                if let error = job.error {
+                    Text(error).foregroundStyle(Theme.danger)
+                }
+                if let parseError = model.historyParseError {
+                    Text(parseError).foregroundStyle(Theme.danger)
+                }
+                if !job.stderr.isEmpty {
+                    LogBox(title: "标准错误", text: job.stderr, minHeight: 80, maxHeight: 140)
+                }
+                BoundedScroll(minHeight: 200) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        sessions
+                        deletions
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .task {
             if model.historyReport == nil, !job.running, model.moPath != nil {
@@ -126,7 +127,7 @@ struct AboutView: View {
     @StateObject private var ui = AboutUI()
 
     var body: some View {
-        ScrollView {
+        BoundedScroll {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .center, spacing: 14) {
                     Image(nsImage: AppIconFactory.image(side: 128))
