@@ -17,6 +17,10 @@ final class AppModel: ObservableObject {
     let uninstallPreview = CommandJob()
     let uninstallLive = PTYJob()
 
+    @Published var cleanPlan: CleanCatalog?
+    @Published var cleanSelection = Set<String>()
+    @Published var cleanPlanError: String?
+    @Published var cleanDelete: CleanDeleteProgress?
     @Published var uninstallApps: [UninstallApp] = []
     @Published var leftoverReview: LeftoverReview?
     @Published var analyzeReport: AnalyzeReport?
@@ -33,6 +37,7 @@ final class AppModel: ObservableObject {
     private var watchLine = ""
 
     init() {
+        clean.onFinish = { [weak self] in self?.ingestCleanPreview() }
         uninstallListJob.onFinish = { [weak self] in self?.ingestUninstallList() }
         uninstallLive.onFinish = { [weak self] in self?.finishUninstall() }
         analyzeJob.onFinish = { [weak self] in self?.ingestAnalyze() }
@@ -164,7 +169,76 @@ final class AppModel: ObservableObject {
     }
 
     func previewClean() {
+        cleanPlanError = nil
+        cleanDelete = nil
         clean.start(moPath: moPath, action: .cleanDryRun, kind: .preview)
+    }
+
+    func toggleClean(_ path: String) {
+        guard cleanPlan?.entries.contains(where: { $0.path == path && $0.deletable }) == true else { return }
+        var next = cleanSelection
+        if next.contains(path) {
+            next.remove(path)
+        } else {
+            next.insert(path)
+        }
+        cleanSelection = next
+    }
+
+    func setCleanSelection(_ paths: Set<String>) {
+        let allowed = Set(cleanPlan?.entries.filter(\.deletable).map(\.path) ?? [])
+        cleanSelection = paths.intersection(allowed)
+    }
+
+    func deleteCleanSelection() async -> String? {
+        guard let plan = cleanPlan else { return "还没有扫描结果。" }
+        let allowed = plan.entries.filter(\.deletable)
+        let allowedPaths = Set(allowed.map(\.path))
+        let roots = CleanPlan.deletionRoots(cleanSelection.filter { allowedPaths.contains($0) })
+        let items = roots.compactMap { path -> CleanDeleteItem? in
+            guard let entry = allowed.first(where: { $0.path == path }) else { return nil }
+            let group = plan.groups.first { $0.entries.contains { $0.path == path } }?.title ?? ""
+            return CleanDeleteItem(path: path, name: entry.name, group: group, bytes: entry.sizeBytes)
+        }.sorted { ($0.bytes ?? -1) > ($1.bytes ?? -1) }
+        guard !items.isEmpty else { return "没有可以删除的项目。" }
+        cleanDelete = CleanDeleteProgress(total: items.count, completed: 0, freedBytes: 0, current: nil, done: [])
+        var failed: [String: String] = [:]
+        for item in items {
+            var progress = cleanDelete ?? CleanDeleteProgress(total: items.count, completed: 0, freedBytes: 0, current: nil, done: [])
+            progress.current = item
+            cleanDelete = progress
+            let outcome = await Task.detached(priority: .userInitiated) { () -> String? in
+                guard CleanPlan.deletable(item.path) else { return "这个路径不会从窗口里删除。" }
+                do {
+                    try FileManager.default.removeItem(at: URL(fileURLWithPath: item.path))
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            var next = cleanDelete ?? progress
+            next.completed += 1
+            next.current = nil
+            if let outcome {
+                failed[item.path] = outcome
+                next.done.insert(CleanDeleteRow(item: item, ok: false, message: outcome), at: 0)
+            } else {
+                next.freedBytes += item.bytes ?? 0
+                next.done.insert(CleanDeleteRow(item: item, ok: true, message: ""), at: 0)
+            }
+            cleanDelete = next
+        }
+        let removed = Set(items.map(\.path).filter { failed[$0] == nil })
+        let remaining = plan.entries.filter { entry in
+            if removed.contains(entry.path) { return false }
+            return !removed.contains { entry.path.hasPrefix($0 + "/") }
+        }
+        cleanPlan = CleanPlan.catalog(remaining)
+        cleanSelection = cleanSelection.intersection(Set(remaining.map(\.path)))
+        guard !failed.isEmpty else { return nil }
+        return failed.map { path, message in
+            "\(Format.homeAbbreviated(path))：\(message)"
+        }.sorted().joined(separator: "\n")
     }
 
     func executeClean() {
@@ -316,6 +390,26 @@ final class AppModel: ObservableObject {
         } else {
             statusError = "mo status 退出码 \(code)。"
         }
+    }
+
+    private func ingestCleanPreview() {
+        guard clean.commandLine.contains("--dry-run") else { return }
+        guard clean.exitCode == 0, !clean.stopped else {
+            if clean.exitCode != nil, !clean.stopped {
+                cleanPlanError = "扫描没有完成。"
+            }
+            return
+        }
+        guard let text = try? String(contentsOfFile: CleanPlan.listPath, encoding: .utf8) else {
+            cleanPlan = nil
+            cleanSelection = []
+            cleanPlanError = "没有读到 ~/.config/mole/clean-list.txt。"
+            return
+        }
+        let catalog = CleanPlan.catalog(CleanPlan.parse(text))
+        cleanPlan = catalog
+        cleanPlanError = nil
+        cleanSelection = Set(catalog.entries.filter { $0.recommended && $0.deletable }.map(\.path))
     }
 
     private func ingestUninstallList() {

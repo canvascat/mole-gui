@@ -193,6 +193,73 @@ import Testing
         #expect(apps?.first?.source == "App")
     }
 
+    @Test func 清理扫描过程() {
+        let steps = CleanScanProgress.parse("""
+        Clean Your Mac
+        Dry Run Mode, Preview only, no deletions
+        ➤ User essentials
+          → Homebrew cache · 1.87GB dry
+        \u{1B}[32m✓\u{1B}[0m Nothing to clean
+        ➤ App caches
+          → WeChat cache · 12.0MB dry
+          → Telegram cache · 4MB dry
+        """)
+        #expect(steps.map(\.title) == ["用户缓存", "App 缓存"])
+        #expect(steps[0].state == .done)
+        #expect(steps[0].items == 1)
+        #expect(steps[0].latest == "Homebrew cache")
+        #expect(steps[1].state == .running)
+        #expect(steps[1].items == 2)
+        #expect(steps[1].latest == "Telegram cache")
+    }
+
+    @Test func 清理清单按类解析() {
+        let home = NSHomeDirectory()
+        let text = """
+        # Mole Cleanup Preview
+        === User essentials ===
+        \(home)/Library/Caches/Google  # 2.44GB
+        \(home)/Library/Caches/Google/Chrome  # 1.70GB, counted under \(home)/Library/Caches/Google
+        === Developer tools ===
+        \(home)/Library/Developer/Xcode/DerivedData/App  # 188.4MB, 2 items
+        === App leftovers ===
+        \(home)/Library/Application Support/OldApp  # size unknown
+        === System ===
+        /Library/Caches/com.apple.iconservices  # 12KB
+        === Mystery ===
+        \(home)/Library/Caches/Custom/Tool  # 8KB
+
+        """
+        let entries = CleanPlan.parse(text)
+        #expect(entries.map(\.path) == [
+            home + "/Library/Caches/Google",
+            home + "/Library/Developer/Xcode/DerivedData/App",
+            home + "/Library/Application Support/OldApp",
+            "/Library/Caches/com.apple.iconservices",
+            home + "/Library/Caches/Custom/Tool",
+        ])
+        #expect(entries[0].sizeBytes == 2_440_000_000)
+        #expect(entries[0].recommended)
+        #expect(entries[2].sizeBytes == nil)
+        #expect(!entries[2].recommended)
+        #expect(!entries[3].deletable)
+        #expect(entries[1].deletable)
+        let catalog = CleanPlan.catalog(entries)
+        #expect(catalog.groups.map(\.title) == ["App 缓存与日志", "开发工具", "卸载残留", "系统数据", "其他"])
+        let roots = CleanPlan.deletionRoots([
+            home + "/Library/Caches/Google",
+            home + "/Library/Caches/Google/Chrome",
+            home + "/Library/Caches/Arc",
+        ])
+        #expect(roots.sorted() == [
+            home + "/Library/Caches/Arc",
+            home + "/Library/Caches/Google",
+        ].sorted())
+        #expect(!CleanPlan.deletable(home + "/Library/Caches"))
+        #expect(!CleanPlan.deletable(home))
+        #expect(CleanPlan.decimalLabel(0) == "0 B")
+    }
+
     @Test func 卸载后的相关文件() {
         let home = NSHomeDirectory()
         let kept = home + "/Library/Preferences/io.tailscale.ipn.macsys.plist"
