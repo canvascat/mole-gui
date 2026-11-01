@@ -25,7 +25,7 @@ enum PolicyError: Error, Equatable, LocalizedError {
         case .needsTerminal:
             return "真正的卸载只能在伪终端里跑，好让 CLI 自己的确认留下。"
         case .invalidName:
-            return "卸载名字无效。请用列表里的 uninstall_name，不要把开关当成名字。"
+            return "卸载名字无效。请用应用的名字，不要把开关当成名字。"
         case .invalidPath:
             return "磁盘路径无效。请选择一个存在的目录。"
         }

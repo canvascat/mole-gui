@@ -100,6 +100,24 @@ enum UninstallLog {
             .joined(separator: "\n")
     }
 
+    /// 卸载没有完成时，从输出末尾取最后两行有内容的话作为原因。
+    static func failureReason(_ raw: String) -> String? {
+        var buffer = TerminalBuffer()
+        buffer.ingest(raw)
+        var picked: [String] = []
+        for line in buffer.lines.reversed() {
+            let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty || isPromptLine(text) { continue }
+            let lower = text.lowercased()
+            if lower.contains("available") && lower.contains("mo update") { continue }
+            if lower.hasPrefix("update ") && lower.contains("available") { continue }
+            if text.contains("Scanning") { continue }
+            picked.insert(text, at: 0)
+            if picked.count == 2 { break }
+        }
+        return picked.isEmpty ? nil : picked.joined(separator: " ")
+    }
+
     static func isPromptLine(_ line: String) -> Bool {
         let text = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if text.isEmpty { return false }

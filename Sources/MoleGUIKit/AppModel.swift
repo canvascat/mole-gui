@@ -392,7 +392,7 @@ final class AppModel: ObservableObject {
         uninstallGeneration += 1
         uninstallTargets = apps
         leftoverReview = nil
-        uninstallLive.start(moPath: moPath, names: apps.map(\.uninstallName))
+        uninstallLive.start(moPath: moPath, names: apps.map(\.launchName))
     }
 
     func trashLeftovers(_ paths: [String]) -> [String: String] {

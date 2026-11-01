@@ -162,6 +162,17 @@ struct UninstallApp: Decodable, Equatable, Identifiable {
     var size: String
     var id: String { path + "\n" + uninstallName }
 
+    /// 传给 `mo uninstall` 的名字。mo 只按显示名和 .app 目录名匹配，
+    /// 而 Homebrew cask 的 uninstall_name 是 cask 名（如 mole-app），传过去会找不到应用。
+    var launchName: String {
+        let directory = URL(fileURLWithPath: path).lastPathComponent
+        if directory.lowercased().hasSuffix(".app") {
+            let base = String(directory.dropLast(4))
+            if !base.isEmpty { return base }
+        }
+        return name.isEmpty ? uninstallName : name
+    }
+
     static func parse(_ text: String) -> [UninstallApp]? {
         guard let data = JSONExtract.arrayData(text) else { return nil }
         return try? JSONDecoder().decode([UninstallApp].self, from: data)

@@ -352,6 +352,17 @@ import Testing
         #expect(!LeftoverPlan.allowed(home + "/Library/../../etc/passwd"))
     }
 
+    @Test func 卸载用应用名而不是cask名() {
+        let apps = UninstallApp.parse(#"[{"name":"Mole","bundle_id":"com.tw93.MoleApp","source":"Homebrew","uninstall_name":"mole-app","path":"/Applications/Mole.app","size":"58.2MB"},{"name":"微信","bundle_id":"com.tencent.xinWeChat","source":"App","uninstall_name":"微信","path":"/Applications/WeChat.app","size":"689MB"}]"#)
+        #expect(apps?[0].uninstallName == "mole-app")
+        #expect(apps?[0].launchName == "Mole", "mo 只按显示名和 .app 目录名匹配，cask 名会匹配不到")
+        #expect(apps?[1].launchName == "WeChat")
+
+        let log = "Warning: No application found matching 'mole-app'\nNo matching applications found.\n\nUpdate 1.67.0 available, run mo update\n"
+        #expect(UninstallLog.failureReason(log) == "Warning: No application found matching 'mole-app' No matching applications found.")
+        #expect(UninstallLog.failureReason("\n\n") == nil)
+    }
+
     @Test func 项目产物按项目解析() {
         let home = NSHomeDirectory()
         let output = """

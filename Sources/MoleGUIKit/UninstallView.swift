@@ -54,7 +54,7 @@ struct UninstallView: View {
     }
 
     private var selectedNames: [String] {
-        selectedApps.map(\.uninstallName)
+        selectedApps.map(\.launchName)
     }
 
     private var selectedLabels: [String] {
@@ -144,7 +144,8 @@ struct UninstallView: View {
         }
         if let error = terminal.error { return error }
         if let code = terminal.exitCode, code != 0, !terminal.stopped {
-            return "卸载没有完成。"
+            guard let reason = UninstallLog.failureReason(terminal.stdout) else { return "卸载没有完成。" }
+            return "卸载没有完成：\(reason)"
         }
         return nil
     }
