@@ -42,6 +42,81 @@ enum Format {
         }
     }
 
+    static func healthGrade(_ score: Int) -> String {
+        switch score {
+        case 85...: return "优秀"
+        case 70..<85: return "良好"
+        case 50..<70: return "一般"
+        default: return "较差"
+        }
+    }
+
+    /// 健康卡上的一句原因。压力优先，其余只翻译 mo 会写出的英文提示。
+    static func healthNote(message: String?, pressure: String?) -> String? {
+        switch pressure {
+        case "warn": return "内存压力偏高"
+        case "critical": return "内存压力很高"
+        default: break
+        }
+        let text = message ?? ""
+        if text.range(of: "restart", options: .caseInsensitive) != nil { return "建议重启" }
+        if text.range(of: "smart", options: .caseInsensitive) != nil { return "磁盘 SMART 异常" }
+        if text.range(of: "full", options: .caseInsensitive) != nil,
+           text.range(of: "disk", options: .caseInsensitive) != nil {
+            return "磁盘快满了"
+        }
+        if text.range(of: "cpu", options: .caseInsensitive) != nil { return "CPU 负载偏高" }
+        if text.range(of: "memory pressure", options: .caseInsensitive) != nil { return "内存压力偏高" }
+        return nil
+    }
+
+    static func uptimeLabel(seconds: Int?, raw: String?) -> String {
+        if let seconds, seconds >= 0 {
+            let days = seconds / 86_400
+            let hours = (seconds % 86_400) / 3_600
+            let minutes = (seconds % 3_600) / 60
+            if days > 0, hours > 0 { return "已运行 \(days) 天 \(hours) 小时" }
+            if days > 0 { return "已运行 \(days) 天" }
+            if hours > 0, minutes > 0 { return "已运行 \(hours) 小时 \(minutes) 分钟" }
+            if hours > 0 { return "已运行 \(hours) 小时" }
+            return "已运行 \(minutes) 分钟"
+        }
+        if let raw, !raw.isEmpty { return "已运行 \(raw)" }
+        return "开机时间未知"
+    }
+
+    /// 磁盘容量按十进制 GB 显示，和访达、mo 的磁盘数字一致。
+    static func storageBytes(_ value: UInt64) -> String {
+        let gb = Double(value) / 1_000_000_000
+        if gb >= 10 { return "\(Int(gb.rounded())) GB" }
+        if gb >= 1 { return String(format: "%.1f GB", gb) }
+        let mb = Double(value) / 1_000_000
+        if mb >= 10 { return "\(Int(mb.rounded())) MB" }
+        if mb >= 1 { return String(format: "%.1f MB", mb) }
+        return bytes(value)
+    }
+
+    /// mo 的磁盘和网络速率单位是 MB/s。
+    static func rateMBps(_ value: Double) -> String {
+        let mb = max(value, 0)
+        let kb = mb * 1024
+        if kb < 1 { return kb == 0 ? "0 KB/s" : "<1 KB/s" }
+        if mb < 0.1 { return String(format: "%.0f KB/s", kb) }
+        if mb < 10 { return String(format: "%.1f MB/s", mb) }
+        return String(format: "%.0f MB/s", mb)
+    }
+
+    static func chipLabel(_ cpuModel: String?) -> String? {
+        guard var text = cpuModel?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        if text.hasPrefix("Apple ") { text.removeFirst("Apple ".count) }
+        return text
+    }
+
+    static func ramLabel(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return raw.replacingOccurrences(of: ".0 ", with: " ")
+    }
+
     static func memoryPressure(_ raw: String?) -> String {
         switch raw {
         case "normal": return "正常"

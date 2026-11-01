@@ -81,6 +81,20 @@ final class AppModel: ObservableObject {
     }
 
     func runStatusLoop(fast: Bool) async {
+        // 定位 mo 和读取版本共用同一把锁。状态页和定位同时开始时要等定位结束。
+        let started = Date()
+        var sawLocating = locating
+        while !Task.isCancelled {
+            if !locating, moPath != nil { break }
+            if locating { sawLocating = true }
+            if sawLocating, !locating { break }
+            if Date().timeIntervalSince(started) > 3 { break }
+            do {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            } catch {
+                return
+            }
+        }
         if fast {
             let run = LiveRun(keepStdout: false)
             watchLine = ""

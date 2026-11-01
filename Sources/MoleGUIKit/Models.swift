@@ -15,14 +15,54 @@ struct StatusReport: Decodable, Equatable {
     var zombieParents: [ZombieParent]
     var processAlerts: [ProcessAlert]
     var hardware: HardwareInfo?
+    var procs: Int?
+    var uptimeSeconds: Int?
+    var gpu: [GPUStatus]
+    var diskIO: DiskIO?
+    var network: [NetworkIface]
+    var networkHistory: NetworkHistory?
+    var thermal: Thermal?
 
     struct CPUStatus: Decodable, Equatable {
         var usage: Double?
+        var perCore: [Double]?
         var load1: Double?
         var load5: Double?
         var load15: Double?
         var coreCount: Int?
         var logicalCPU: Int?
+        var pCoreCount: Int?
+        var eCoreCount: Int?
+    }
+
+    struct GPUStatus: Decodable, Equatable, Identifiable {
+        var name: String?
+        var usage: Double?
+        var coreCount: Int?
+        var id: String { name ?? "gpu" }
+    }
+
+    struct DiskIO: Decodable, Equatable {
+        var readRate: Double?
+        var writeRate: Double?
+    }
+
+    struct NetworkIface: Decodable, Equatable, Identifiable {
+        var name: String?
+        var rxRateMBs: Double?
+        var txRateMBs: Double?
+        var ip: String?
+        var id: String { name ?? ip ?? "net" }
+    }
+
+    struct NetworkHistory: Decodable, Equatable {
+        var rxHistory: [Double]
+        var txHistory: [Double]
+    }
+
+    struct Thermal: Decodable, Equatable {
+        var cpuTemp: Double?
+        var gpuTemp: Double?
     }
 
     struct MemoryStatus: Decodable, Equatable {
@@ -72,6 +112,7 @@ struct StatusReport: Decodable, Equatable {
     struct HardwareInfo: Decodable, Equatable {
         var model: String?
         var cpuModel: String?
+        var totalRAM: String?
         var osVersion: String?
     }
 
@@ -195,7 +236,13 @@ extension StatusReport {
         case zombieCount = "zombie_count"
         case zombieParents = "zombie_parents"
         case processAlerts = "process_alerts"
-        case hardware
+        case hardware, procs
+        case uptimeSeconds = "uptime_seconds"
+        case gpu
+        case diskIO = "disk_io"
+        case network
+        case networkHistory = "network_history"
+        case thermal
     }
 
     init(from decoder: Decoder) throws {
@@ -214,14 +261,59 @@ extension StatusReport {
         zombieParents = try container.decodeIfPresent([ZombieParent].self, forKey: .zombieParents) ?? []
         processAlerts = try container.decodeIfPresent([ProcessAlert].self, forKey: .processAlerts) ?? []
         hardware = try container.decodeIfPresent(HardwareInfo.self, forKey: .hardware)
+        procs = try container.decodeIfPresent(Int.self, forKey: .procs)
+        uptimeSeconds = try container.decodeIfPresent(Int.self, forKey: .uptimeSeconds)
+        gpu = try container.decodeIfPresent([GPUStatus].self, forKey: .gpu) ?? []
+        diskIO = try container.decodeIfPresent(DiskIO.self, forKey: .diskIO)
+        network = try container.decodeIfPresent([NetworkIface].self, forKey: .network) ?? []
+        networkHistory = try container.decodeIfPresent(NetworkHistory.self, forKey: .networkHistory)
+        thermal = try container.decodeIfPresent(Thermal.self, forKey: .thermal)
     }
 }
 
 extension StatusReport.CPUStatus {
     enum CodingKeys: String, CodingKey {
         case usage, load1, load5, load15
+        case perCore = "per_core"
         case coreCount = "core_count"
         case logicalCPU = "logical_cpu"
+        case pCoreCount = "p_core_count"
+        case eCoreCount = "e_core_count"
+    }
+}
+
+extension StatusReport.GPUStatus {
+    enum CodingKeys: String, CodingKey {
+        case name, usage
+        case coreCount = "core_count"
+    }
+}
+
+extension StatusReport.DiskIO {
+    enum CodingKeys: String, CodingKey {
+        case readRate = "read_rate"
+        case writeRate = "write_rate"
+    }
+}
+
+extension StatusReport.NetworkIface {
+    enum CodingKeys: String, CodingKey {
+        case name, ip
+        case rxRateMBs = "rx_rate_mbs"
+        case txRateMBs = "tx_rate_mbs"
+    }
+}
+
+extension StatusReport.NetworkHistory {
+    enum CodingKeys: String, CodingKey {
+        case rxHistory = "rx_history"
+        case txHistory = "tx_history"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rxHistory = try container.decodeIfPresent([Double].self, forKey: .rxHistory) ?? []
+        txHistory = try container.decodeIfPresent([Double].self, forKey: .txHistory) ?? []
     }
 }
 
@@ -249,10 +341,18 @@ extension StatusReport.ProcessRow {
     }
 }
 
+extension StatusReport.Thermal {
+    enum CodingKeys: String, CodingKey {
+        case cpuTemp = "cpu_temp"
+        case gpuTemp = "gpu_temp"
+    }
+}
+
 extension StatusReport.HardwareInfo {
     enum CodingKeys: String, CodingKey {
         case model
         case cpuModel = "cpu_model"
+        case totalRAM = "total_ram"
         case osVersion = "os_version"
     }
 }

@@ -170,6 +170,38 @@ import Testing
         #expect(status?.disks.first?.mount == "/")
         #expect(status?.zombieCount == 2)
         #expect(status?.topProcesses.first?.name == "launchd")
+        #expect(status?.gpu.isEmpty == true)
+        #expect(status?.network.isEmpty == true)
+    }
+
+    @Test func 状态卡片字段() {
+        let status = StatusReport.parse("""
+        {"health_score":74,"health_score_msg":"Good: memory pressure","uptime_seconds":2847600,
+         "procs":152,"hardware":{"cpu_model":"Apple M4","total_ram":"16.0 GB","os_version":"macOS 27.0.1"},
+         "cpu":{"usage":34,"per_core":[10,20],"logical_cpu":10,"load1":5.2},
+         "gpu":[{"name":"Apple M4","usage":-1}],
+         "thermal":{"cpu_temp":0,"gpu_temp":0},
+         "disk_io":{"read_rate":110,"write_rate":0.0005},
+         "disks":[{"mount":"/","used":204000000000,"total":245000000000,"used_percent":83}],
+         "network":[{"name":"en1","rx_rate_mbs":0.009,"tx_rate_mbs":0.001,"ip":"192.168.1.2"}],
+         "network_history":{"rx_history":[0.1,0.2],"tx_history":[0.1]}}
+        """)
+        #expect(status?.procs == 152)
+        #expect(status?.cpu?.perCore?.count == 2)
+        #expect(status?.gpu.first?.usage == -1)
+        #expect(status?.diskIO?.readRate == 110)
+        #expect(status?.network.first?.name == "en1")
+        #expect(status?.networkHistory?.rxHistory.count == 2)
+        #expect(status?.thermal?.cpuTemp == 0)
+        #expect(Format.healthGrade(74) == "良好")
+        #expect(Format.healthNote(message: "Good: memory pressure", pressure: "warn") == "内存压力偏高")
+        #expect(Format.healthNote(message: "Excellent: Restart Recommended", pressure: "") == "建议重启")
+        #expect(Format.uptimeLabel(seconds: 2_847_600, raw: nil) == "已运行 32 天 23 小时")
+        #expect(Format.rateMBps(110) == "110 MB/s")
+        #expect(Format.rateMBps(0.0005) == "<1 KB/s")
+        #expect(Format.storageBytes(245_000_000_000) == "245 GB")
+        #expect(Format.chipLabel("Apple M4") == "M4")
+        #expect(Format.ramLabel("16.0 GB") == "16 GB")
     }
 
     @Test func 分析() {
