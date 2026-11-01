@@ -224,6 +224,22 @@ import Testing
         let apps = UninstallApp.parse(#"[{"name":"Slack","bundle_id":"com.slack","source":"App","uninstall_name":"Slack","path":"/Applications/Slack.app","size":"1.2 GB"}]"#)
         #expect(apps?.first?.uninstallName == "Slack")
         #expect(apps?.first?.source == "App")
+        #expect(UninstallSizing.bytes(from: "1.2 GB") == 1_200_000_000)
+        #expect(UninstallSizing.bytes(from: "218.7 MB") == 218_700_000)
+        #expect(UninstallSizing.bytes(from: "1.50GB") == 1_500_000_000)
+        #expect(UninstallSizing.totalLabel(61_080_000_000) == "61.08 GB")
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let year = now.addingTimeInterval(-400 * 86_400)
+        #expect(AppActivity.phrase(since: year, now: now) == "1年前有活动")
+        #expect(AppActivity.phrase(since: now.addingTimeInterval(-20 * 86_400), now: now) == "2周前有活动")
+        let intel = Data([0xCF, 0xFA, 0xED, 0xFE, 0x07, 0x00, 0x00, 0x01])
+        let arm = Data([0xCF, 0xFA, 0xED, 0xFE, 0x0C, 0x00, 0x00, 0x01])
+        #expect(MachImage.isIntelOnly(intel))
+        #expect(!MachImage.isIntelOnly(arm))
+        var fat = Data([0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x01])
+        fat.append(contentsOf: [0x01, 0x00, 0x00, 0x07])
+        fat.append(contentsOf: [UInt8](repeating: 0, count: 16))
+        #expect(MachImage.isIntelOnly(fat))
     }
 
     @Test func 清理扫描过程() {

@@ -56,7 +56,7 @@ struct RootView: View {
             case .clean:
                 CleanView(model: model, job: model.clean)
             case .uninstall:
-                UninstallView(model: model, listJob: model.uninstallListJob, preview: model.uninstallPreview, terminal: model.uninstallLive)
+                UninstallView(model: model, listJob: model.uninstallListJob, terminal: model.uninstallLive)
             case .disk:
                 AnalyzeView(model: model, job: model.analyzeJob)
             case .purge:

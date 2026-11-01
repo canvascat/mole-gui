@@ -6,24 +6,41 @@ final class UninstallUI: ObservableObject {
     @Published var query = ""
     @Published var confirm = false
     @Published var pendingApps: [UninstallApp] = []
+    @Published var sort: UninstallSort = .recent
+    @Published var ascending = true
+    @Published var details: [String: AppSpotlight] = [:]
+    @Published var hovered: String?
 }
 
 struct UninstallView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var listJob: CommandJob
-    @ObservedObject var preview: CommandJob
     @ObservedObject var terminal: PTYJob
     @ObservedObject private var activity = CommandActivity.shared
     @StateObject private var ui = UninstallUI()
 
     private var filtered: [UninstallApp] {
         let text = ui.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return model.uninstallApps }
-        return model.uninstallApps.filter { app in
-            app.name.localizedStandardContains(text)
-                || app.uninstallName.localizedStandardContains(text)
-                || app.bundleId.localizedStandardContains(text)
+        let matched: [UninstallApp]
+        if text.isEmpty {
+            matched = model.uninstallApps
+        } else {
+            matched = model.uninstallApps.filter { app in
+                app.name.localizedStandardContains(text)
+                    || app.uninstallName.localizedStandardContains(text)
+                    || app.bundleId.localizedStandardContains(text)
+            }
         }
+        return UninstallOrder.sorted(matched, by: ui.sort, ascending: ui.ascending, details: ui.details)
+    }
+
+    private var summary: String {
+        let count = model.uninstallApps.count
+        if count == 0 {
+            return listJob.running ? "正在读取已安装的应用" : "还没有读到已安装的应用"
+        }
+        let bytes = UninstallSizing.sum(model.uninstallApps.map(\.size))
+        return "已安装 App \(count) 个 · \(UninstallSizing.totalLabel(bytes))"
     }
 
     private var selectedApps: [UninstallApp] {
@@ -47,92 +64,20 @@ struct UninstallView: View {
     }
 
     var body: some View {
-        PageShell(
-            model: model,
-            title: "卸载",
-            subtitle: "列表来自 mo uninstall --list。确认后执行 mo uninstall。卸载成功后会刷新列表，并列出还留在磁盘上的相关文件。不传 --permanent。"
-        ) {
-            FillColumn(spacing: 16) {
-                WarningNote(text: "点卸载后，窗口会再确认一次。确认后直接执行，应用文件放进废纸篓。卸载完成后如果还有相关文件，会再列出来，可以跳过，或放进废纸篓。")
-                HStack {
-                    Button(listJob.running ? "正在列出…" : "刷新列表") { model.loadUninstallList() }
-                        .disabled(model.moPath == nil || listJob.running)
-                    Button("预览") { model.previewUninstall(names: selectedNames) }
-                        .disabled(model.moPath == nil || preview.running || selectedNames.isEmpty)
-                    Button("在伪终端中卸载") {
-                        ui.pendingApps = selectedApps
-                        ui.confirm = true
-                    }
-                        .disabled(!UninstallLaunch.canStart(
-                            moFound: model.moPath != nil,
-                            terminalRunning: terminal.running,
-                            names: selectedNames
-                        ))
-                        .tint(Theme.danger)
-                    if terminal.running {
-                        Button("停止") { terminal.stop() }
-                    }
-                    Spacer()
+        PageShell(model: model, title: "卸载", subtitle: summary) {
+            FillColumn(spacing: 12) {
+                toolbar
+                if let note = statusNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(Theme.danger)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.bordered)
-
-                HStack(alignment: .top, spacing: 16) {
-                    FillColumn(spacing: 8) {
-                        TextField("搜索名称或 bundle id", text: $ui.query)
-                            .textFieldStyle(.roundedBorder)
-                        List(filtered, selection: $ui.selection) { app in
-                            HStack(alignment: .center, spacing: 8) {
-                                Image(nsImage: AppBundleIcon.image(forPath: app.path))
-                                    .resizable()
-                                    .interpolation(.high)
-                                    .frame(width: 28, height: 28)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(app.name.isEmpty ? app.uninstallName : app.name)
-                                    Text("\(app.source) · \(app.size)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .tag(app.id)
-                        }
-                        .fillsRemainder()
-                    }
-                    .frame(minWidth: 280, maxWidth: 360, maxHeight: .infinity)
-                    FillColumn(spacing: 8) {
-                        if selectedNames.isEmpty {
-                            Text("先选一个或多个应用。后续参数用 uninstall_name，不用显示名猜测。")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("将使用的名字：\(selectedNames.joined(separator: "，"))")
-                                .textSelection(.enabled)
-                        }
-                        if let error = listJob.error {
-                            Text(error).foregroundStyle(Theme.danger)
-                        }
-                        if listJob.exitCode == 0, model.uninstallApps.isEmpty, !listJob.stdout.isEmpty {
-                            Text("没能解析应用列表 JSON。")
-                                .foregroundStyle(Theme.danger)
-                        }
-                        if !listJob.stderr.isEmpty {
-                            LogPane(title: "标准错误", text: listJob.stderr)
-                                .frame(height: 96)
-                        }
-                        GeometryReader { proxy in
-                            let gap: CGFloat = 8
-                            let previewHeight = max((proxy.size.height - gap) * 0.55, 0)
-                            let terminalHeight = max(proxy.size.height - gap - previewHeight, 0)
-                            VStack(spacing: gap) {
-                                StreamPanes(job: preview)
-                                    .frame(height: previewHeight)
-                                liveLog
-                                    .frame(height: terminalHeight)
-                            }
-                        }
-                        .fillsRemainder()
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                appList
+                    .fillsRemainder()
+                if !selectedApps.isEmpty || terminal.running {
+                    selectionBar
                 }
-                .fillsRemainder()
             }
         }
         .task {
@@ -158,13 +103,24 @@ struct UninstallView: View {
             let ids = Set(apps.map(\.id))
             ui.selection = ui.selection.intersection(ids)
         }
+        .task(id: model.uninstallApps.map(\.path).joined(separator: "\n")) {
+            let paths = model.uninstallApps.map(\.path)
+            let loaded = await Task.detached(priority: .utility) {
+                var details: [String: AppSpotlight] = [:]
+                for path in paths where details[path] == nil {
+                    details[path] = AppSpotlight.read(path: path)
+                }
+                return details
+            }.value
+            ui.details = loaded
+        }
         .alert("确认卸载？", isPresented: $ui.confirm) {
             Button("取消", role: .cancel) {}
             Button("卸载", role: .destructive) {
                 model.startUninstall(apps: ui.pendingApps)
             }
         } message: {
-            Text("将卸载 \(pendingLabels.joined(separator: "，"))。应用文件会放进废纸篓。完成后如果还有相关文件，可以再选择是否清理。")
+            Text("将移除 \(pendingLabels.joined(separator: "、"))。应用文件会放进废纸篓。完成后如果还有相关文件，可以再选择是否清理。")
         }
         .sheet(item: $model.leftoverReview) { review in
             LeftoverSheet(review: review) { paths in
@@ -181,37 +137,201 @@ struct UninstallView: View {
         }
     }
 
-    private var liveLog: some View {
-        FillColumn(spacing: 8) {
-            if !terminal.commandLine.isEmpty {
-                Text(terminal.commandLine)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
+    private var statusNote: String? {
+        if let error = listJob.error { return error }
+        if listJob.exitCode == 0, model.uninstallApps.isEmpty, !listJob.stdout.isEmpty {
+            return "没能解析应用列表。"
+        }
+        if let error = terminal.error { return error }
+        if let code = terminal.exitCode, code != 0, !terminal.stopped {
+            return "卸载没有完成。"
+        }
+        return nil
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 14) {
+            Spacer(minLength: 0)
+            ForEach(UninstallSort.allCases) { key in
+                Button {
+                    if ui.sort == key {
+                        ui.ascending.toggle()
+                    } else {
+                        ui.sort = key
+                        ui.ascending = key != .size
+                    }
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(key.title)
+                        if ui.sort == key {
+                            Image(systemName: ui.ascending ? "chevron.up" : "chevron.down")
+                                .font(.caption2)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(ui.sort == key ? Color.primary : Color.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
+                TextField("搜索", text: $ui.query)
+                    .textFieldStyle(.plain)
             }
-            if let error = terminal.error {
-                Text(error).foregroundStyle(Theme.danger)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+            .frame(width: 168)
+            Button {
+                model.loadUninstallList()
+            } label: {
+                Image(systemName: "arrow.clockwise")
             }
-            GeometryReader { proxy in
-                let gap: CGFloat = 8
-                let height = max((proxy.size.height - gap) / 2, 0)
-                VStack(spacing: gap) {
-                    LogPane(
-                        title: "标准输出",
-                        text: terminal.stdout,
-                        empty: "确认后，卸载输出会显示在这里。"
-                    )
-                    .frame(height: height)
-                    LogPane(title: "标准错误", text: terminal.stderr)
-                        .frame(height: height)
+            .buttonStyle(.borderless)
+            .disabled(model.moPath == nil || listJob.running)
+            .help(listJob.running ? "正在列出" : "刷新列表")
+        }
+    }
+
+    private var appList: some View {
+        Group {
+            if model.uninstallApps.isEmpty, listJob.running {
+                VStack(spacing: 8) {
+                    ProgressView()
+                    Text("正在读取已安装的应用")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if filtered.isEmpty {
+                Text(ui.query.isEmpty ? "没有可卸载的应用。" : "没有匹配的应用。")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(filtered) { app in
+                    Button {
+                        toggle(app.id)
+                    } label: {
+                        appRow(app)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(terminal.running)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 12))
+                    .listRowBackground(rowBackground(app))
+                    .onHover { inside in
+                        if inside {
+                            ui.hovered = app.id
+                        } else if ui.hovered == app.id {
+                            ui.hovered = nil
+                        }
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+    }
+
+    private func appRow(_ app: UninstallApp) -> some View {
+        let selected = ui.selection.contains(app.id)
+        let name = app.name.isEmpty ? app.uninstallName : app.name
+        let caption = ui.details[app.path]?.caption(size: app.size) ?? app.size
+        return HStack(spacing: 12) {
+            Image(nsImage: AppBundleIcon.image(forPath: app.path))
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 36, height: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                if !caption.isEmpty {
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-            .fillsRemainder()
-            if let code = terminal.exitCode {
-                Text(terminal.stopped ? "已停止，退出码 \(code)。" : "退出码 \(code)")
+            Spacer(minLength: 8)
+            if selected, !app.size.isEmpty {
+                Text("移除 \(app.size)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Image(systemName: selected ? "checkmark.square.fill" : "square")
+                .font(.title3)
+                .foregroundStyle(selected ? Theme.accent : Color.secondary.opacity(0.7))
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private func rowBackground(_ app: UninstallApp) -> Color {
+        if ui.selection.contains(app.id) {
+            return Theme.accent.opacity(0.14)
+        }
+        if ui.hovered == app.id {
+            return Color.primary.opacity(0.05)
+        }
+        return Color.clear
+    }
+
+    private var selectionBar: some View {
+        let bytes = UninstallSizing.sum(selectedApps.map(\.size))
+        return HStack(spacing: 12) {
+            HStack(spacing: -8) {
+                ForEach(selectedApps.prefix(4)) { app in
+                    Image(nsImage: AppBundleIcon.image(forPath: app.path))
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 22, height: 22)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1))
+                }
+            }
+            Text(selectionSummary(bytes: bytes))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Button("取消选择") { ui.selection = [] }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(Theme.accent)
+                .disabled(terminal.running || ui.selection.isEmpty)
+            Spacer(minLength: 8)
+            if terminal.running {
+                Button("停止") { terminal.stop() }
+                    .buttonStyle(.bordered)
+            }
+            Button(terminal.running ? "正在移除…" : "移除 \(selectedApps.count) 项") {
+                ui.pendingApps = selectedApps
+                ui.confirm = true
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(terminal.running || !UninstallLaunch.canStart(
+                moFound: model.moPath != nil,
+                terminalRunning: terminal.running,
+                names: selectedNames
+            ))
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+    }
+
+    private func selectionSummary(bytes: Double) -> String {
+        let names = selectedLabels.joined(separator: "、")
+        if bytes > 0 {
+            return "\(names) · \(UninstallSizing.totalLabel(bytes))"
+        }
+        return names
+    }
+
+    private func toggle(_ id: String) {
+        if ui.selection.contains(id) {
+            ui.selection.remove(id)
+        } else {
+            ui.selection.insert(id)
         }
     }
 }
