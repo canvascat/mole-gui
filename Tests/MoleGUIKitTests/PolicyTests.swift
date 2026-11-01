@@ -387,6 +387,91 @@ import Testing
         #expect(PurgePlan.parse("No artifacts found to purge").isEmpty)
     }
 
+    @Test func 维护预览按任务解析() {
+        let output = """
+
+        Optimize
+        \u{2192} DRY RUN MODE, No files will be modified
+
+        \u{2699} System  12/16 GB RAM | 158/228 GB Disk | Uptime 33d
+
+        Performance diagnosis
+          \u{25D7} Likely bottleneck: WindowServer (~39.2% CPU sustained)
+
+        \u{27A4} Finder Cache Refresh
+          \u{2192} QuickLook thumbnails refreshed
+          \u{2192} Icon services cache rebuilt
+
+        \u{27A4} App State Cleanup
+          \u{2192} App saved states optimized
+
+        \u{27A4} Broken Config Repair
+          \u{2192} All preference files valid
+
+        \u{27A4} Prevent Finder .DS_Store
+          \u{2192} .DS_Store prevention enabled on network & USB volumes
+
+        \u{27A4} Periodic Maintenance
+          \u{2192} Periodic maintenance skipped (not available on this macOS version)
+
+        \u{27A4} Shared File Lists
+          - Shared file lists not readable (check directory permissions and Full Disk Access)
+
+        \u{27A4} Disk Health
+          \u{2192} Disk verify skipped
+
+        \u{27A4} Login Items
+          \u{25CE} Broken login item: Foo (app not found)
+          \u{25CE} 1 broken login item(s) \u{00B7} remove via System Settings > General > Login Items
+
+        ======================================================================
+        Dry Run Complete, No Changes Made
+        Would apply 2 optimizations
+        2 unchanged | 1 skipped | 2 unavailable | 1 need attention
+        Run without --dry-run to apply these changes
+        ======================================================================
+        """
+        let report = OptimizePlan.parse(output)
+        #expect(report.dryRun)
+        #expect(report.system == OptimizeSystem(ramUsed: 12, ramTotal: 16, diskUsed: 158, diskTotal: 228, uptimeDays: 33))
+        #expect(report.diagnosis.count == 1)
+        #expect(report.tasks.count == 8)
+        #expect(report.tasks[0].displayTitle == "Finder 缓存刷新")
+        #expect(report.tasks[0].lines.count == 2)
+        #expect(report.tasks[0].outcome == .applied)
+        #expect(report.tasks[2].outcome == .unchanged)
+        #expect(report.tasks[3].outcome == .applied)
+        #expect(report.tasks[4].outcome == .unavailable)
+        #expect(report.tasks[5].outcome == .unavailable)
+        #expect(report.tasks[6].outcome == .skipped)
+        #expect(report.tasks[7].outcome == .attention)
+        #expect(report.tasks[1].outcome == .unchanged, "文字看不出结果的任务按汇总数字对账")
+        #expect(report.summary == OptimizeCounts(applied: 2, unchanged: 2, skipped: 1, unavailable: 2, attention: 1, failed: 0))
+        #expect(report.finished && !report.inferred)
+    }
+
+    @Test func 维护汇总补全无法判断的任务() {
+        let output = """
+        \u{27A4} App State Cleanup
+          \u{2192} App saved states optimized
+
+        \u{27A4} Broken Config Repair
+          \u{2192} All preference files valid
+
+        ======================================================================
+        Optimization Complete
+        Applied 0 optimizations
+        1 unchanged | 1 failed
+        ======================================================================
+        """
+        let report = OptimizePlan.parse(output)
+        #expect(report.tasks[0].outcome == .failed, "汇总数字里只缺一类时按它补上")
+        #expect(OptimizePlan.parse("\u{27A4} Notifications\n  \u{2192} something odd\n").tasks.first?.outcome == .unknown)
+        let partial = OptimizePlan.parse("\u{27A4} Disk Health\n  \u{25CE} Disk verification failed (exit=1)\n")
+        #expect(partial.tasks.first?.outcome == .failed)
+        #expect(!partial.finished)
+    }
+
     @Test func 历史() {
         let history = HistoryReport.parse(#"""
         {"limit":50,"sessions":[{"command":"clean","run_id":"","attribution":"ambiguous","started_at":"t0","ended_at":"","items":1,"size":"1MB","operation_count":1,"failed_tasks":0,"actions":{"removed":1,"trashed":0,"skipped":0,"failed":0,"rebuilt":0,"other":0}}],"deletions":[{"timestamp":"t1","mode":"remove","status":"success","size_kb":null,"path":"/tmp/a"}]}
