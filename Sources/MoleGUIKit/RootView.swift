@@ -8,6 +8,7 @@ final class SidebarState: ObservableObject {
 struct RootView: View {
     @ObservedObject var model: AppModel
     @StateObject private var sidebar = SidebarState()
+    @ObservedObject private var activity = CommandActivity.shared
 
     var body: some View {
         NavigationSplitView {
@@ -35,6 +36,12 @@ struct RootView: View {
                 }
                 .listStyle(.sidebar)
                 .fillsRemainder()
+
+                if activity.snapshot.running {
+                    RunningCommandCard(snapshot: activity.snapshot) {
+                        activity.stop()
+                    }
+                }
 
                 Button("关于") { model.showAbout = true }
                     .buttonStyle(.borderless)
@@ -65,7 +72,60 @@ struct RootView: View {
         .sheet(isPresented: $model.showAbout) {
             AboutView(model: model)
         }
+        .onChange(of: sidebar.section) { section in
+            if section != .status {
+                model.stopStatusWatch()
+            }
+        }
         .task { await model.locate() }
+    }
+}
+
+private struct RunningCommandCard: View {
+    var snapshot: ActivitySnapshot
+    var stop: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(snapshot.title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Text(shownCommand)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(4)
+                .textSelection(.enabled)
+            if !snapshot.detail.isEmpty {
+                Text(snapshot.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Button("停止", action: stop)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 4)
+    }
+
+    /// 侧栏很窄，完整路径会在参数中间断开。这里只留可执行文件名，后面的参数原样保留。
+    private var shownCommand: String {
+        let line = snapshot.commandLine
+        guard let space = line.firstIndex(of: " ") else {
+            return (line as NSString).lastPathComponent
+        }
+        let head = String(line[..<space])
+        guard !head.hasPrefix("'"), (head as NSString).lastPathComponent == "mo" else { return line }
+        return "mo" + line[space...]
     }
 }
 

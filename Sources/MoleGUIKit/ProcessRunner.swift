@@ -3,16 +3,24 @@ import Darwin
 import Foundation
 
 enum RunnerError: Error, LocalizedError {
-    case busy
+    case busy(String)
     case launch(String)
 
     var errorDescription: String? {
         switch self {
-        case .busy:
-            return "已经有一条 mo 在运行。等它结束，或先停止它。"
+        case .busy(let title):
+            if title.isEmpty {
+                return "已经有一条 mo 在运行。侧栏底部可以停止它。"
+            }
+            return "已经有一条 mo 在运行：\(title)。侧栏底部可以停止它。"
         case .launch(let message):
             return message
         }
+    }
+
+    static func busyNow() -> RunnerError {
+        let snap = CommandBoard.shared.current()
+        return .busy(snap.running ? snap.title : "")
     }
 }
 
@@ -99,6 +107,7 @@ final class LiveRun: @unchecked Sendable {
     private let cap = 400_000
     private var retainedHandles: [FileHandle] = []
     private var pipes: [Pipe] = []
+    private var activityToken = 0
 
     init(keepStdout: Bool = true) {
         self.keepStdout = keepStdout
@@ -131,8 +140,20 @@ final class LiveRun: @unchecked Sendable {
 
     func start(executable: String, arguments: [String], environment: [String: String]) throws {
         try CommandPolicy.validate(executable: executable, arguments: arguments, pseudoTerminal: false)
-        guard RunLock.shared.tryAcquire() else { throw RunnerError.busy }
+        guard RunLock.shared.tryAcquire() else { throw RunnerError.busyNow() }
         acquired = true
+        let token = CommandBoard.shared.begin(
+            title: RunningCommandTitle.make(arguments),
+            commandLine: DisplayCommand.string(executable: executable, arguments: arguments),
+            stop: { self.stop() }
+        )
+        lock.lock()
+        activityToken = token
+        lock.unlock()
+        var ready = false
+        defer {
+            if !ready { CommandBoard.shared.end(token: token) }
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -150,10 +171,10 @@ final class LiveRun: @unchecked Sendable {
         let outFD = outPipe.fileHandleForReading.fileDescriptor
         let errFD = errPipe.fileHandleForReading.fileDescriptor
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.readLoop(fd: outFD, stderr: false)
+            self?.readLoop(fd: outFD, stderr: false, activity: token)
         }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.readLoop(fd: errFD, stderr: true)
+            self?.readLoop(fd: errFD, stderr: true, activity: token)
         }
         process.terminationHandler = { [weak self] proc in
             ProcessTracker.shared.remove(proc)
@@ -169,6 +190,7 @@ final class LiveRun: @unchecked Sendable {
         }
         try? outPipe.fileHandleForWriting.close()
         try? errPipe.fileHandleForWriting.close()
+        ready = true
     }
 
     func stop() {
@@ -176,7 +198,11 @@ final class LiveRun: @unchecked Sendable {
         stopped = true
         let proc = process
         lock.unlock()
-        guard let proc, proc.isRunning else { return }
+        guard let proc, proc.isRunning else {
+            // 进程已经没了，但界面和锁可能还停在“正在运行”。这里把收尾补上。
+            signalDone()
+            return
+        }
         proc.terminate()
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) {
             if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
@@ -187,12 +213,21 @@ final class LiveRun: @unchecked Sendable {
         done.wait()
     }
 
-    private func readLoop(fd: Int32, stderr: Bool) {
+    deinit {
+        if let proc = process, proc.isRunning {
+            proc.terminate()
+            kill(proc.processIdentifier, SIGKILL)
+        }
+        releaseLock()
+        CommandBoard.shared.end(token: activityToken)
+    }
+
+    private func readLoop(fd: Int32, stderr: Bool, activity: Int) {
         var buffer = [UInt8](repeating: 0, count: 8192)
         while true {
             let count = Darwin.read(fd, &buffer, buffer.count)
             if count > 0 {
-                append(Data(buffer[0..<count]), stderr: stderr)
+                append(Data(buffer[0..<count]), stderr: stderr, activity: activity)
             } else {
                 break
             }
@@ -200,7 +235,7 @@ final class LiveRun: @unchecked Sendable {
         markStreamEnded()
     }
 
-    private func append(_ data: Data, stderr: Bool) {
+    private func append(_ data: Data, stderr: Bool, activity: Int) {
         let text = String(decoding: data, as: UTF8.self)
         lock.lock()
         if stderr {
@@ -214,6 +249,7 @@ final class LiveRun: @unchecked Sendable {
         let publish = now.timeIntervalSince(lastPublish) > 0.08
         if publish { lastPublish = now }
         lock.unlock()
+        CommandBoard.shared.note(token: activity, chunk: text)
         delta?(text, stderr)
         if publish { change?() }
     }
@@ -251,10 +287,12 @@ final class LiveRun: @unchecked Sendable {
         }
         didSignal = true
         let change = onChange
+        let token = activityToken
         lock.unlock()
         change?()
         releaseLock()
         done.signal()
+        CommandBoard.shared.end(token: token)
     }
 
     private func releaseLock() {
@@ -284,6 +322,7 @@ final class PTYRun: @unchecked Sendable {
     private var onChange: (@Sendable () -> Void)?
     private var handles: [FileHandle] = []
     private var pipes: [Pipe] = []
+    private var activityToken = 0
 
     func setChangeHandler(_ handler: @escaping @Sendable () -> Void) {
         lock.lock()
@@ -312,8 +351,20 @@ final class PTYRun: @unchecked Sendable {
 
     func start(executable: String, arguments: [String], environment: [String: String]) throws {
         try CommandPolicy.validate(executable: executable, arguments: arguments, pseudoTerminal: true)
-        guard RunLock.shared.tryAcquire() else { throw RunnerError.busy }
+        guard RunLock.shared.tryAcquire() else { throw RunnerError.busyNow() }
         acquired = true
+        let token = CommandBoard.shared.begin(
+            title: RunningCommandTitle.make(arguments),
+            commandLine: DisplayCommand.string(executable: executable, arguments: arguments),
+            stop: { self.stop() }
+        )
+        lock.lock()
+        activityToken = token
+        lock.unlock()
+        var ready = false
+        defer {
+            if !ready { CommandBoard.shared.end(token: token) }
+        }
 
         var masterFD: Int32 = -1
         var slaveFD: Int32 = -1
@@ -354,14 +405,14 @@ final class PTYRun: @unchecked Sendable {
         let outFD = outPipe.fileHandleForReading.fileDescriptor
         let errFD = errPipe.fileHandleForReading.fileDescriptor
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.readPipe(fd: outFD, stderr: false)
+            self?.readPipe(fd: outFD, stderr: false, activity: token)
         }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.readPipe(fd: errFD, stderr: true)
+            self?.readPipe(fd: errFD, stderr: true, activity: token)
         }
         let masterCopy = masterFD
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.readMaster(masterCopy)
+            self?.readMaster(masterCopy, activity: token)
         }
         process.terminationHandler = { [weak self] proc in
             ProcessTracker.shared.remove(proc)
@@ -383,6 +434,7 @@ final class PTYRun: @unchecked Sendable {
         Darwin.close(inputFD)
         try? outPipe.fileHandleForWriting.close()
         try? errPipe.fileHandleForWriting.close()
+        ready = true
     }
 
     func send(_ text: String) {
@@ -401,7 +453,10 @@ final class PTYRun: @unchecked Sendable {
         stopped = true
         let proc = process
         lock.unlock()
-        guard let proc, proc.isRunning else { return }
+        guard let proc, proc.isRunning else {
+            signalDone()
+            return
+        }
         proc.terminate()
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) {
             if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
@@ -410,12 +465,25 @@ final class PTYRun: @unchecked Sendable {
 
     func wait() { done.wait() }
 
-    private func readPipe(fd: Int32, stderr: Bool) {
+    deinit {
+        if let proc = process, proc.isRunning {
+            proc.terminate()
+            kill(proc.processIdentifier, SIGKILL)
+        }
+        if master >= 0 {
+            Darwin.close(master)
+            master = -1
+        }
+        releaseLock()
+        CommandBoard.shared.end(token: activityToken)
+    }
+
+    private func readPipe(fd: Int32, stderr: Bool, activity: Int) {
         var buffer = [UInt8](repeating: 0, count: 8192)
         while true {
             let count = Darwin.read(fd, &buffer, buffer.count)
             if count > 0 {
-                append(Data(buffer[0..<count]), stderr: stderr)
+                append(Data(buffer[0..<count]), stderr: stderr, activity: activity)
             } else {
                 break
             }
@@ -423,7 +491,7 @@ final class PTYRun: @unchecked Sendable {
         markStreamEnded()
     }
 
-    private func append(_ data: Data, stderr: Bool) {
+    private func append(_ data: Data, stderr: Bool, activity: Int) {
         let text = String(decoding: data, as: UTF8.self)
         lock.lock()
         if stderr {
@@ -433,6 +501,7 @@ final class PTYRun: @unchecked Sendable {
         }
         let change = onChange
         lock.unlock()
+        CommandBoard.shared.note(token: activity, chunk: text)
         change?()
     }
 
@@ -444,7 +513,7 @@ final class PTYRun: @unchecked Sendable {
         return next
     }
 
-    private func readMaster(_ fd: Int32) {
+    private func readMaster(_ fd: Int32, activity: Int) {
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
             let count = Darwin.read(fd, &buffer, buffer.count)
@@ -454,6 +523,7 @@ final class PTYRun: @unchecked Sendable {
                 tty = capped(tty, text)
                 let change = onChange
                 lock.unlock()
+                CommandBoard.shared.note(token: activity, chunk: text)
                 change?()
             } else {
                 break
@@ -492,11 +562,13 @@ final class PTYRun: @unchecked Sendable {
         let fd = master
         master = -1
         let change = onChange
+        let token = activityToken
         lock.unlock()
         if fd >= 0 { Darwin.close(fd) }
         change?()
         releaseLock()
         done.signal()
+        CommandBoard.shared.end(token: token)
     }
 
     private func releaseLock() {

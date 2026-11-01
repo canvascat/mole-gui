@@ -13,6 +13,7 @@ final class StatusUI: ObservableObject {
 struct StatusView: View {
     @ObservedObject var model: AppModel
     @StateObject private var ui = StatusUI()
+    @State private var watchToken = 0
 
     var body: some View {
         PageShell(
@@ -27,6 +28,14 @@ struct StatusView: View {
                         Text("正在读取")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                    if model.statusPaused {
+                        Text("已停止读取")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("继续") { watchToken += 1 }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
                     }
                     Spacer()
                     if let updated = model.statusUpdatedAt {
@@ -58,7 +67,7 @@ struct StatusView: View {
                     .fillsRemainder()
             }
         }
-        .task {
+        .task(id: watchToken) {
             await model.runStatusLoop(fast: true)
         }
     }

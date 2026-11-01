@@ -33,8 +33,11 @@ final class AppModel: ObservableObject {
     @Published var statusError: String?
     @Published var statusUpdatedAt: Date?
     @Published var statusRunning = false
+    @Published var statusPaused = false
 
     private var watchLine = ""
+    private var statusRun: LiveRun?
+    private var statusWatchID = 0
 
     init() {
         clean.onFinish = { [weak self] in self?.ingestCleanPreview() }
@@ -80,11 +83,19 @@ final class AppModel: ObservableObject {
             : text
     }
 
+    func stopStatusWatch() {
+        statusWatchID += 1
+        statusRun?.stop()
+    }
+
     func runStatusLoop(fast: Bool) async {
+        statusWatchID += 1
+        let watchID = statusWatchID
+        statusPaused = false
         // 定位 mo 和读取版本共用同一把锁。状态页和定位同时开始时要等定位结束。
         let started = Date()
         var sawLocating = locating
-        while !Task.isCancelled {
+        while !Task.isCancelled, watchID == statusWatchID {
             if !locating, moPath != nil { break }
             if locating { sawLocating = true }
             if sawLocating, !locating { break }
@@ -95,11 +106,14 @@ final class AppModel: ObservableObject {
                 return
             }
         }
+        if Task.isCancelled || watchID != statusWatchID { return }
         if fast {
             let run = LiveRun(keepStdout: false)
+            statusRun = run
             watchLine = ""
             statusStderr = ""
             statusRunning = true
+            var started = false
             run.setDeltaHandler { [weak self] delta, isStderr in
                 DispatchQueue.main.async {
                     self?.consumeWatch(delta, isStderr: isStderr)
@@ -107,7 +121,9 @@ final class AppModel: ObservableObject {
             }
             defer {
                 run.stop()
+                if statusRun === run { statusRun = nil }
                 statusRunning = false
+                statusPaused = started && !Task.isCancelled && watchID == statusWatchID
             }
             do {
                 guard let moPath else {
@@ -120,11 +136,13 @@ final class AppModel: ObservableObject {
                     arguments: arguments,
                     environment: MoleEnvironment.make(moPath: moPath)
                 )
+                started = true
             } catch {
                 statusError = error.localizedDescription
                 return
             }
-            while !Task.isCancelled {
+            while !Task.isCancelled, watchID == statusWatchID {
+                if run.snapshot().exitCode != nil { break }
                 do {
                     try await Task.sleep(nanoseconds: 200_000_000)
                 } catch {

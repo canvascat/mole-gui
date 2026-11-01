@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import os
 import Testing
 @testable import MoleGUIKit
 
@@ -343,5 +344,46 @@ import Testing
         #expect(history?.sessions.first?.endedAt == "")
         #expect(history?.deletions.first?.path == "/tmp/a")
         #expect(history?.deletions.first?.sizeKb == nil)
+    }
+}
+
+@Suite struct RunningCommandTests {
+    @Test func 命令标题() {
+        #expect(RunningCommandTitle.make(["version"]) == "正在确认 Mole 版本")
+        #expect(RunningCommandTitle.make(["status", "--watch", "--interval", "2s"]) == "正在读取本机状态")
+        #expect(RunningCommandTitle.make(["clean", "--dry-run"]) == "正在扫描可清理的文件")
+        #expect(RunningCommandTitle.make(["clean"]) == "正在清理")
+        #expect(RunningCommandTitle.make(["uninstall", "--list"]) == "正在列出可卸载的应用")
+        #expect(RunningCommandTitle.make(["uninstall", "--dry-run", "Demo"]) == "正在预览卸载")
+        #expect(RunningCommandTitle.make(["uninstall", "Demo"]) == "正在卸载")
+        #expect(RunningCommandTitle.make(["analyze", "--json", "/"]) == "正在分析磁盘占用")
+        #expect(RunningCommandTitle.make(["purge", "--yes"]) == "正在清理项目产物")
+        #expect(RunningCommandTitle.make(["optimize"]) == "正在执行维护")
+        #expect(RunningCommandTitle.make(["history"]) == "正在读取操作记录")
+        #expect(RunningCommandTitle.detail(in: ["", "➤ User essentials", "{\"health\":1}", "\"health_score\": 85", ""]) == "➤ User essentials")
+        #expect(RunningCommandTitle.detail(in: ["{\"health\":1}"]) == "")
+    }
+
+    @Test func 活动板记录当前命令并停止() {
+        let board = CommandBoard()
+        let hits = OSAllocatedUnfairLock(initialState: 0)
+        let token = board.begin(title: "正在卸载", commandLine: "mo uninstall Demo", stop: {
+            hits.withLock { $0 += 1 }
+        })
+        #expect(board.current().running)
+        #expect(board.current().title == "正在卸载")
+        #expect(board.current().commandLine == "mo uninstall Demo")
+        board.note(token: token, chunk: "Removing Demo\n")
+        #expect(board.current().detail == "Removing Demo")
+        board.note(token: token, chunk: "{\"skip\":true}\n")
+        #expect(board.current().detail == "Removing Demo")
+        board.requestStop()
+        #expect(hits.withLock { $0 } == 1)
+        board.end(token: token)
+        #expect(!board.current().running)
+        board.end(token: token)
+        #expect(!board.current().running)
+        #expect(RunnerError.busy("正在读取本机状态").errorDescription == "已经有一条 mo 在运行：正在读取本机状态。侧栏底部可以停止它。")
+        #expect(RunnerError.busy("").errorDescription == "已经有一条 mo 在运行。侧栏底部可以停止它。")
     }
 }

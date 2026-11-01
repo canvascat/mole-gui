@@ -13,6 +13,7 @@ struct UninstallView: View {
     @ObservedObject var listJob: CommandJob
     @ObservedObject var preview: CommandJob
     @ObservedObject var terminal: PTYJob
+    @ObservedObject private var activity = CommandActivity.shared
     @StateObject private var ui = UninstallUI()
 
     private var filtered: [UninstallApp] {
@@ -143,6 +144,15 @@ struct UninstallView: View {
             if path != nil, model.uninstallApps.isEmpty, !listJob.running {
                 model.loadUninstallList()
             }
+        }
+        .onChange(of: activity.snapshot.running) { running in
+            guard !running,
+                  model.uninstallApps.isEmpty,
+                  !listJob.running,
+                  let error = listJob.error,
+                  error.hasPrefix("已经有一条 mo 在运行")
+            else { return }
+            model.loadUninstallList()
         }
         .onChange(of: model.uninstallApps) { apps in
             let ids = Set(apps.map(\.id))

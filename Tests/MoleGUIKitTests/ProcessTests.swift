@@ -131,4 +131,66 @@ import Testing
         #expect(out.contains("Files to be removed"))
         #expect(!out.contains("NO-TTY"))
     }
+
+    @Test func 运行中的命令会出现在活动板上() throws {
+        let sleeper = try fixtures.makeMo(directory: "activity", body: """
+        #!/bin/sh
+        echo "Scanning caches"
+        sleep 30
+        """)
+        let run = LiveRun()
+        try run.start(
+            executable: sleeper,
+            arguments: try CommandPolicy.arguments(for: .cleanDryRun),
+            environment: MoleEnvironment.make(moPath: sleeper)
+        )
+        let shown = CommandBoard.shared.current()
+        #expect(shown.running)
+        #expect(shown.title == "正在扫描可清理的文件")
+        #expect(shown.commandLine.contains("clean"))
+        #expect(shown.commandLine.contains("--dry-run"))
+        let deadline = Date().addingTimeInterval(2)
+        var detail = ""
+        while Date() < deadline {
+            detail = CommandBoard.shared.current().detail
+            if detail.contains("Scanning caches") { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        #expect(detail.contains("Scanning caches"))
+        run.stop()
+        run.wait()
+        #expect(!CommandBoard.shared.current().running)
+    }
+
+    @Test func 调用方松开后停止按钮仍然有效() throws {
+        let sleeper = try fixtures.makeMo(directory: "hold", body: """
+        #!/bin/sh
+        echo "still here"
+        sleep 30
+        """)
+        var run: LiveRun? = LiveRun()
+        try run?.start(
+            executable: sleeper,
+            arguments: try CommandPolicy.arguments(for: .version),
+            environment: MoleEnvironment.make(moPath: sleeper)
+        )
+        #expect(CommandBoard.shared.current().running)
+        run = nil
+        #expect(CommandBoard.shared.current().running)
+        CommandBoard.shared.requestStop()
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline, CommandBoard.shared.current().running {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        #expect(!CommandBoard.shared.current().running)
+        let again = LiveRun()
+        try again.start(
+            executable: sleeper,
+            arguments: try CommandPolicy.arguments(for: .version),
+            environment: MoleEnvironment.make(moPath: sleeper)
+        )
+        again.stop()
+        again.wait()
+        #expect(!CommandBoard.shared.current().running)
+    }
 }
