@@ -28,3 +28,7 @@ open Package.swift
 ```
 
 在 Xcode 里选 `mole-gui` scheme 运行即可调试。Xcode 直接运行的是裸可执行文件，不带 `Info.plist`，所以 Dock 名称等和 `make` 打出的 `.app` 会略有不同。
+
+## 许可证
+
+与上游 [tw93/Mole](https://github.com/tw93/Mole) 一致，采用 GNU GPL v3，全文见 [LICENSE](LICENSE)。
