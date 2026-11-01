@@ -215,7 +215,7 @@ enum CleanPlan {
         return left > right
     }
 
-    private static func parseSize(_ token: String) -> Int64? {
+    static func parseSize(_ token: String) -> Int64? {
         let text = token.trimmingCharacters(in: .whitespaces)
         if text.isEmpty || text == "size unknown" { return nil }
         guard let match = text.range(of: #"^(\d+(?:\.\d+)?)(GB|MB|KB|B)$"#, options: .regularExpression) else {

@@ -352,6 +352,41 @@ import Testing
         #expect(!LeftoverPlan.allowed(home + "/Library/../../etc/passwd"))
     }
 
+    @Test func 项目产物按项目解析() {
+        let home = NSHomeDirectory()
+        let output = """
+        \u{2192} DRY RUN MODE, No project artifacts will be removed
+
+        Purge Project Artifacts
+
+        \u{2713} [DRY RUN] ~/web/app/node_modules, 1.50GB
+        \u{2713} [DRY RUN] ~/web/app/dist, 12.3MB
+        \u{2713} [DRY RUN] ~/lib/target, size unknown
+        \u{2713} [DRY RUN] [cloud] ~/Library/CloudStorage/Box/x/node_modules, 5.0MB
+        \u{2713} [DRY RUN] ~/web/app/dist, 12.3MB
+        \u{2713} [DRY RUN] ~/odd, name/build, 1KB
+
+        ======================================================================
+        Dry run complete - no changes made
+        Would free approximately: 1.5GB | Items: 5 | Free: 39GB
+        """
+        let items = PurgePlan.parse(output)
+        #expect(items.count == 5, "重复路径只算一次")
+        #expect(items[0].path == home + "/web/app/node_modules")
+        #expect(items[0].sizeBytes == 1_500_000_000)
+        #expect(items[0].deletable)
+        #expect(items[2].sizeBytes == nil)
+        #expect(items[3].cloud && !items[3].deletable, "云同步目录不从窗口里移除")
+        #expect(items[4].path == home + "/odd, name/build", "路径里有逗号时只按最后一个逗号切")
+        #expect(items[4].sizeBytes == 1_000)
+
+        let projects = PurgePlan.projects(items)
+        #expect(projects.first?.path == home + "/web/app")
+        #expect(projects.first?.items.map(\.name) == ["node_modules", "dist"])
+        #expect(PurgePlan.totalBytes(items).partial)
+        #expect(PurgePlan.parse("No artifacts found to purge").isEmpty)
+    }
+
     @Test func 历史() {
         let history = HistoryReport.parse(#"""
         {"limit":50,"sessions":[{"command":"clean","run_id":"","attribution":"ambiguous","started_at":"t0","ended_at":"","items":1,"size":"1MB","operation_count":1,"failed_tasks":0,"actions":{"removed":1,"trashed":0,"skipped":0,"failed":0,"rebuilt":0,"other":0}}],"deletions":[{"timestamp":"t1","mode":"remove","status":"success","size_kb":null,"path":"/tmp/a"}]}

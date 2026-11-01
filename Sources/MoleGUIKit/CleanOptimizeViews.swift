@@ -97,73 +97,7 @@ struct CleanView: View {
     }
 
     private var deleteProgress: some View {
-        let progress = model.cleanDelete
-        let completed = progress?.completed ?? 0
-        let total = progress?.total ?? 0
-        let freed = progress?.freedBytes ?? 0
-        return FillColumn(spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("正在清理")
-                    .font(.headline)
-                Spacer()
-                Text("\(completed) / \(total)")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            ProgressView(value: progress?.fraction ?? 0)
-            Text("已清理 \(CleanPlan.decimalLabel(freed))")
-                .font(.title3.monospacedDigit())
-            if let current = progress?.current {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("当前")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(current.name)
-                        .lineLimit(1)
-                    Text(Format.homeAbbreviated(current.path))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if !current.group.isEmpty {
-                        Text(current.group)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            } else if completed == 0 {
-                Text("正在准备删除。")
-                    .foregroundStyle(.secondary)
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(progress?.done ?? []) { row in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: row.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                .foregroundStyle(row.ok ? Color(red: 0.18, green: 0.70, blue: 0.42) : Theme.danger)
-                                .frame(width: 16)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(row.item.name)
-                                    .lineLimit(1)
-                                Text(row.ok ? Format.homeAbbreviated(row.item.path) : row.message)
-                                    .font(.caption)
-                                    .foregroundStyle(row.ok ? .secondary : Theme.danger)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            Spacer(minLength: 8)
-                            Text(row.item.bytes.map { CleanPlan.decimalLabel($0) } ?? "")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 6)
-                    }
-                }
-            }
-        }
+        DeleteProgressPanel(progress: model.cleanDelete, title: "正在清理", doneTitle: "已清理")
     }
 
     private var scanProgress: some View {
@@ -380,7 +314,7 @@ struct CleanView: View {
     }
 }
 
-private enum CheckMark {
+enum CheckMark {
     case on, off, partial
 
     var symbol: String {
@@ -432,81 +366,6 @@ struct OptimizeView: View {
             Button("开始维护", role: .destructive) { model.executeOptimize() }
         } message: {
             Text("将执行 mo optimize。部分任务会改系统状态。管理员密码框如果出现，是 CLI 自己请求的。")
-        }
-    }
-}
-
-final class PurgeUI: ObservableObject {
-    @Published var confirm = false
-    @Published var phrase = ""
-    @Published var terminalError: String?
-}
-
-struct PurgeView: View {
-    @ObservedObject var model: AppModel
-    @ObservedObject var job: CommandJob
-    @StateObject private var ui = PurgeUI()
-
-    var body: some View {
-        PageShell(
-            model: model,
-            title: "项目产物",
-            subtitle: "mo purge --dry-run 只展示候选。删除只有一个动作：确认后执行 mo purge --yes。"
-        ) {
-            FillColumn(spacing: 16) {
-                WarningNote(text: "这会永久删除全部非近期、非云同步的候选，不能只删其中几项，也不会进废纸篓。node_modules、构建目录一类东西删了要重新安装。更稳的做法是在终端里自己跑 mo purge。")
-                HStack {
-                    Button("预览") { model.previewPurge() }
-                        .disabled(model.moPath == nil || job.running)
-                    Button("在终端中打开") {
-                        ui.terminalError = model.openTerminal(arguments: ["purge"])
-                    }
-                    .disabled(model.moPath == nil)
-                    Button("永久删除全部非近期、非云同步的候选，不能只删其中几项") {
-                        ui.phrase = ""
-                        ui.confirm = true
-                    }
-                    .disabled(model.moPath == nil || job.running || !job.acceptsExecute)
-                    .tint(Theme.danger)
-                    if job.running {
-                        Button("停止") { job.stop() }
-                    }
-                    Spacer()
-                }
-                .buttonStyle(.bordered)
-                if !job.acceptsExecute, !job.running {
-                    InfoNote(text: "请先预览。窗口不能替你挑其中几项。")
-                }
-                if let terminalError = ui.terminalError {
-                    Text(terminalError).foregroundStyle(Theme.danger)
-                }
-                StreamPanes(job: job, destructive: true)
-                    .fillsRemainder()
-            }
-        }
-        .sheet(isPresented: $ui.confirm) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("永久删除全部符合条件的项目产物")
-                    .font(.title3.weight(.semibold))
-                Text("将执行 mo purge --yes。这会永久删除全部非近期、非云同步的候选，不能只删其中几项，也不会进废纸篓。")
-                    .fixedSize(horizontal: false, vertical: true)
-                TextField("输入「永久删除」", text: $ui.phrase)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Button("取消") { ui.confirm = false }
-                        .keyboardShortcut(.cancelAction)
-                    Spacer()
-                    Button("执行 mo purge --yes") {
-                        model.executePurge(phrase: ui.phrase)
-                        ui.confirm = false
-                    }
-                    .disabled(ui.phrase != CommandPolicy.purgeConfirmation)
-                    .keyboardShortcut(.defaultAction)
-                    .tint(Theme.danger)
-                }
-            }
-            .padding(24)
-            .frame(width: 480)
         }
     }
 }

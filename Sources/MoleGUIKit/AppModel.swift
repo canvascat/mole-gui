@@ -21,6 +21,11 @@ final class AppModel: ObservableObject {
     @Published var cleanSelection = Set<String>()
     @Published var cleanPlanError: String?
     @Published var cleanDelete: CleanDeleteProgress?
+    @Published var purgePlan: [PurgeItem]?
+    @Published var purgeSelection = Set<String>()
+    @Published var purgeError: String?
+    @Published var purgeNote: String?
+    @Published var purgeDelete: CleanDeleteProgress?
     @Published var uninstallApps: [UninstallApp] = []
     @Published var leftoverReview: LeftoverReview?
     @Published var analyzeReport: AnalyzeReport?
@@ -41,6 +46,7 @@ final class AppModel: ObservableObject {
 
     init() {
         clean.onFinish = { [weak self] in self?.ingestCleanPreview() }
+        purge.onFinish = { [weak self] in self?.ingestPurgePreview() }
         uninstallListJob.onFinish = { [weak self] in self?.ingestUninstallList() }
         uninstallLive.onFinish = { [weak self] in self?.finishUninstall() }
         analyzeJob.onFinish = { [weak self] in self?.ingestAnalyze() }
@@ -286,11 +292,81 @@ final class AppModel: ObservableObject {
     }
 
     func previewPurge() {
+        purgeError = nil
+        purgeNote = nil
+        purgeDelete = nil
         purge.start(moPath: moPath, action: .purgeDryRun, kind: .preview)
     }
 
-    func executePurge(phrase: String) {
-        purge.start(moPath: moPath, action: .purgeYes, kind: .execute(phrase: phrase))
+    func togglePurge(_ path: String) {
+        guard purgePlan?.contains(where: { $0.path == path && $0.deletable }) == true else { return }
+        var next = purgeSelection
+        if next.contains(path) {
+            next.remove(path)
+        } else {
+            next.insert(path)
+        }
+        purgeSelection = next
+    }
+
+    func setPurgeSelection(_ paths: Set<String>) {
+        let allowed = Set(purgePlan?.filter(\.deletable).map(\.path) ?? [])
+        purgeSelection = paths.intersection(allowed)
+    }
+
+    /// 把勾选的项目产物移到废纸篓。只处理预览里列出、且通过路径检查的目录。
+    func trashPurgeSelection() async -> String? {
+        guard let plan = purgePlan else { return "还没有扫描结果。" }
+        let allowed = plan.filter(\.deletable)
+        let chosen = Set(purgeSelection)
+        let items = allowed.filter { chosen.contains($0.path) }.map { item in
+            CleanDeleteItem(
+                path: item.path,
+                name: item.name,
+                group: URL(fileURLWithPath: item.projectPath).lastPathComponent,
+                bytes: item.sizeBytes
+            )
+        }.sorted { ($0.bytes ?? -1) > ($1.bytes ?? -1) }
+        guard !items.isEmpty else { return "没有可以移除的项目。" }
+        purgeDelete = CleanDeleteProgress(total: items.count, completed: 0, freedBytes: 0, current: nil, done: [])
+        var failed: [String: String] = [:]
+        for item in items {
+            var progress = purgeDelete ?? CleanDeleteProgress(total: items.count, completed: 0, freedBytes: 0, current: nil, done: [])
+            progress.current = item
+            purgeDelete = progress
+            let outcome = await Task.detached(priority: .userInitiated) { () -> String? in
+                guard CleanPlan.deletable(item.path) else { return "这个路径不会从窗口里移除。" }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: item.path, isDirectory: &isDirectory) else {
+                    return "目录已经不在了。"
+                }
+                do {
+                    try FileManager.default.trashItem(at: URL(fileURLWithPath: item.path), resultingItemURL: nil)
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            var next = purgeDelete ?? progress
+            next.completed += 1
+            next.current = nil
+            if let outcome {
+                failed[item.path] = outcome
+                next.done.insert(CleanDeleteRow(item: item, ok: false, message: outcome), at: 0)
+            } else {
+                next.freedBytes += item.bytes ?? 0
+                next.done.insert(CleanDeleteRow(item: item, ok: true, message: ""), at: 0)
+            }
+            purgeDelete = next
+        }
+        let removed = Set(items.map(\.path).filter { failed[$0] == nil })
+        let remaining = plan.filter { !removed.contains($0.path) }
+        purgePlan = remaining
+        purgeSelection = purgeSelection.intersection(Set(remaining.map(\.path)))
+        guard !failed.isEmpty else { return nil }
+        return failed.map { path, message in
+            "\(Format.homeAbbreviated(path))：\(message)"
+        }.sorted().joined(separator: "\n")
     }
 
     func loadHistory() {
@@ -382,6 +458,7 @@ final class AppModel: ObservableObject {
         let allowed: Set<String> = [
             "clean --whitelist",
             "purge",
+            "purge --paths",
             "installer",
             "slim",
             "update",
@@ -442,6 +519,26 @@ final class AppModel: ObservableObject {
         cleanPlan = catalog
         cleanPlanError = nil
         cleanSelection = Set(catalog.entries.filter { $0.recommended && $0.deletable }.map(\.path))
+    }
+
+    private func ingestPurgePreview() {
+        guard purge.commandLine.contains("--dry-run"), !purge.stopped, let code = purge.exitCode else { return }
+        let items = PurgePlan.parse(purge.stdout)
+        // 发现不完整时 mo 退出码是 1，但已经列出的项目仍然可用。
+        if code != 0, items.isEmpty {
+            let hint = purge.stderr
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .last { !$0.isEmpty }
+            purgePlan = nil
+            purgeSelection = []
+            purgeError = hint.map { "扫描没有完成：\($0)" } ?? "扫描没有完成。"
+            return
+        }
+        purgePlan = items
+        purgeSelection = []
+        purgeError = nil
+        purgeNote = code != 0 ? "搜索目录没有扫完，下面是已经扫完的部分。可以用「搜索目录」检查要扫描的位置。" : nil
     }
 
     private func ingestUninstallList() {
